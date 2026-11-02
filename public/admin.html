@@ -71,7 +71,7 @@
       <div class="grid-2">
         <div class="card table-card">
           <div style="padding:18px 20px 6px"><div class="card-title">今日出勤</div><p class="card-sub" style="margin:0 0 8px">每位員工今天的打卡狀況</p></div>
-          <div class="table-wrap"><table><thead><tr><th>員工</th><th>狀態</th><th>上班</th><th>下班</th><th>今日工時</th><th>備註</th></tr></thead><tbody id="ovBody"></tbody></table></div>
+          <div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>狀態</th><th>上班</th><th>下班</th><th>今日工時</th><th>備註</th></tr></thead><tbody id="ovBody"></tbody></table></div>
         </div>
         <div class="card">
           <div class="card-title">打卡地點限制</div><p class="card-sub">員工需符合條件才能打卡</p>
@@ -119,9 +119,9 @@
         <button data-tab="punches"><i data-icon="clock" data-size="16"></i>打卡明細（可修改）</button>
         <button data-tab="blocked"><i data-icon="ban" data-size="16"></i>被拒絕的打卡 <span class="count" id="blockedCount"></span></button>
       </div>
-      <div class="card table-card" id="tabDaily"><div class="table-wrap"><table><thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>加班</th><th>狀態</th></tr></thead><tbody id="dailyBody"></tbody></table></div></div>
-      <div class="card table-card hidden" id="tabPunches"><div class="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>來源 / 修改註記</th><th></th></tr></thead><tbody id="punchBody"></tbody></table></div></div>
-      <div class="card table-card hidden" id="tabBlocked"><div class="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>拒絕原因</th></tr></thead><tbody id="blockedBody"></tbody></table></div>
+      <div class="card table-card" id="tabDaily"><div class="table-wrap"><table class="stack"><thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>加班</th><th>狀態</th></tr></thead><tbody id="dailyBody"></tbody></table></div></div>
+      <div class="card table-card hidden" id="tabPunches"><div class="table-wrap"><table class="stack"><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>來源 / 修改註記</th><th></th></tr></thead><tbody id="punchBody"></tbody></table></div></div>
+      <div class="card table-card hidden" id="tabBlocked"><div class="table-wrap"><table class="stack"><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>拒絕原因</th></tr></thead><tbody id="blockedBody"></tbody></table></div>
         <p class="help" style="margin:0;padding:12px 18px;border-top:1px solid var(--line)">員工因不在公司網路或位置範圍而被拒絕的打卡會記錄在這裡。若是公司 IP 變了，可從這裡看到員工目前的 IP。</p></div>
     </section>
 
@@ -147,7 +147,7 @@
             <div><label for="lfStatus">狀態</label><select id="lfStatus"><option value="">全部狀態</option><option value="pending">待審核</option><option value="approved">已核准</option><option value="rejected">已退回</option><option value="cancelled">已取消</option></select></div>
           </div>
         </div>
-        <div class="card table-card" style="margin-top:16px"><div class="table-wrap"><table><thead><tr><th>員工</th><th>假別</th><th>期間</th><th>時數</th><th>原因</th><th>狀態</th><th>審核意見</th><th></th></tr></thead><tbody id="lvBody"></tbody></table></div></div>
+        <div class="card table-card" style="margin-top:16px"><div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>假別</th><th>期間</th><th>時數</th><th>原因</th><th>狀態</th><th>審核意見</th><th></th></tr></thead><tbody id="lvBody"></tbody></table></div></div>
       </div>
 
       <div data-lpane="cal" class="hidden">
@@ -169,12 +169,12 @@
       <div data-lpane="setup" class="hidden">
         <div class="card set-section" style="margin-bottom:18px">
           <div class="set-head"><span class="s-ic"><i data-icon="palm"></i></span><div><h3>特休額度</h3><p id="balHint">每位員工今年的特休額度（以小時計）。核准「特休」時會自動扣除；額度依曆年（1/1～12/31）計算，跨年不會自動結轉。</p></div></div>
-          <div class="table-wrap"><table><thead><tr><th>員工</th><th>到職日</th><th>勞基法建議</th><th>年度額度</th><th>已核准使用</th><th>審核中</th><th>剩餘</th><th></th></tr></thead><tbody id="balBody"></tbody></table></div>
+          <div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>到職日</th><th>勞基法建議</th><th>年度額度</th><th>已核准使用</th><th>審核中</th><th>剩餘</th><th></th></tr></thead><tbody id="balBody"></tbody></table></div>
         </div>
         <div class="card set-section">
           <div class="set-head" style="align-items:center"><span class="s-ic"><i data-icon="tag"></i></span><div style="flex:1"><h3>假別</h3><p>員工申請時可選的假別。停用後不會出現在申請表，但舊紀錄會保留。</p></div>
             <button class="btn sm" id="addType"><i data-icon="plus" data-size="16"></i>新增假別</button></div>
-          <div class="table-wrap"><table><thead><tr><th>假別</th><th>扣特休額度</th><th>建議附證明</th><th>狀態</th><th></th></tr></thead><tbody id="typeBody"></tbody></table></div>
+          <div class="table-wrap"><table class="stack"><thead><tr><th>假別</th><th>扣特休額度</th><th>建議附證明</th><th>狀態</th><th></th></tr></thead><tbody id="typeBody"></tbody></table></div>
         </div>
       </div>
     </section>
@@ -208,13 +208,14 @@
           <div class="card stat tone-info"><span class="s-ic"><i data-icon="trend"></i></span><div class="n" id="pOT">0</div><div class="l" id="pOTl">加班費（NT$）</div></div>
           <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="pLeave">0</div><div class="l" id="pLeavel">請假扣薪（NT$）</div></div>
         </div>
-        <div class="card table-card"><div class="table-wrap"><table class="pay-table"><thead><tr><th>員工／計薪</th><th>出勤／工時</th><th>加班</th><th>出勤狀況</th><th>請假與薪資影響</th><th class="r">應發</th><th class="r">應扣</th><th class="r">實發</th><th></th></tr></thead><tbody id="payBody"></tbody></table></div></div>
+        <div class="card table-card pay-table-card"><div class="table-wrap"><table class="pay-table"><thead><tr><th>員工／計薪</th><th>出勤／工時</th><th>加班</th><th>出勤狀況</th><th>請假與薪資影響</th><th class="r">應發</th><th class="r">應扣</th><th class="r">實發</th><th></th></tr></thead><tbody id="payBody"></tbody></table></div></div>
+        <div class="pay-cards" id="payCards"></div>
         <p class="help" style="margin-top:12px">點「明細」可查看每一筆計算、加入獎金或其他加扣項；確認後該月份會鎖定（保留確認當下的試算結果），之後修改打卡或請假不會影響已確認的月份。薪資單以 PDF 寄到員工的 Email（只有「已確認」的月份可以寄送），員工也能在打卡頁的「薪資單」自行下載。</p>
       </div>
       <div data-ppane="set" class="hidden">
         <div class="card set-section" style="margin-bottom:18px">
           <div class="set-head"><span class="s-ic"><i data-icon="banknote"></i></span><div><h3>員工薪資</h3><p>每位員工的計薪方式、金額、固定津貼與固定扣項（勞保／健保自付額請依投保級距手動填寫，系統不自動計算）。</p></div></div>
-          <div class="table-wrap"><table><thead><tr><th>員工</th><th>計薪方式</th><th class="r">金額</th><th>固定津貼</th><th>固定扣項</th><th>備註</th><th></th></tr></thead><tbody id="paySetBody"></tbody></table></div>
+          <div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>計薪方式</th><th class="r">金額</th><th>固定津貼</th><th>固定扣項</th><th>備註</th><th></th></tr></thead><tbody id="paySetBody"></tbody></table></div>
         </div>
         <form class="card set-section" id="mailForm" style="margin-bottom:18px" novalidate>
           <div class="set-head"><span class="s-ic"><i data-icon="mail"></i></span><div><h3>薪資單 Email 寄送設定</h3><p>透過公司的信箱（SMTP）把 PDF 薪資單寄給員工。密碼只存在伺服器，不會再顯示。</p></div></div>
@@ -277,7 +278,7 @@
             </div>
             <div>
               <div class="label">假別給薪比例</div>
-              <div class="table-wrap" style="border:1px solid var(--line);border-radius:var(--r)"><table><thead><tr><th>假別</th><th>給薪比例</th><th>每年給薪上限（天）</th><th>法規預設</th></tr></thead><tbody id="prTypes"></tbody></table></div>
+              <div class="table-wrap" style="border:1px solid var(--line);border-radius:var(--r)"><table class="stack"><thead><tr><th>假別</th><th>給薪比例</th><th>每年給薪上限（天）</th><th>法規預設</th></tr></thead><tbody id="prTypes"></tbody></table></div>
               <p class="help">病假（普通傷病，未住院）一年 30 天內半薪，超過部分不給薪；事假、家庭照顧假不給薪；生理假減半發給；特休、婚假、喪假、公假、產檢假等照給。</p>
             </div>
           </div>
@@ -290,7 +291,7 @@
     <section data-sec="employees" class="hidden">
       <div class="page-head"><div><h1>員工管理</h1><p>新增員工並設定打卡用的 4 位數 PIN 碼</p></div>
         <button class="btn" id="addEmp"><i data-icon="plus" data-size="18"></i>新增員工</button></div>
-      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>員工</th><th>PIN 碼</th><th>Email（寄薪資單）</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
+      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>PIN 碼</th><th>Email（寄薪資單）</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
       <p class="help" style="margin-top:12px">移除員工後，他將無法再打卡，但歷史打卡紀錄會保留，仍可查詢與匯出。</p>
     </section>
 
@@ -386,7 +387,7 @@
     <!-- 修改紀錄 -->
     <section data-sec="audit" class="hidden">
       <div class="page-head"><div><h1>修改紀錄</h1><p>管理員的所有新增、修改與刪除動作</p></div></div>
-      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>時間</th><th>動作</th><th>內容</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>
+      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>時間</th><th>動作</th><th>內容</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>
     </section>
   </div></main>
 </div>

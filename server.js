@@ -590,6 +590,19 @@ app.put('/api/admin/employees/:id', (req, res) => {
   audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}`);
   res.json({ ok: true });
 });
+// 只修改 Email（寄送薪資單視窗中直接編輯）
+app.put('/api/admin/employees/:id/email', (req, res) => {
+  const id = Number(req.params.id);
+  const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(id);
+  if (!emp) return res.status(404).json({ error: '找不到員工' });
+  const email = String(req.body?.email || '').trim();
+  if (email && (email.length > 120 || !/^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(email))) return res.status(400).json({ error: 'Email 格式錯誤' });
+  if (email !== (emp.email || '')) {
+    db.prepare('UPDATE employees SET email=? WHERE id=?').run(email, id);
+    audit('修改員工', `修改員工「${emp.name}」（Email：${email || '已清除'}）`);
+  }
+  res.json({ ok: true, email });
+});
 app.delete('/api/admin/employees/:id', (req, res) => {
   const id = Number(req.params.id);
   const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(id);
