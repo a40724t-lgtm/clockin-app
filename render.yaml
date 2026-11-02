@@ -1,0 +1,18 @@
+# Render Blueprint（免費方案測試用；資料存在 /tmp，重新啟動或重新部署後會重置）
+services:
+  - type: web
+    name: clockin-app
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DATA_DIR
+        value: /tmp/clockin-data
