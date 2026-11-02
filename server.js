@@ -21,7 +21,9 @@ function trustProxySetting() {
     if (v === 'false') return false;
     return v;
   }
-  if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) return 1;
+  // 雲端平台（選填）偵測：有任一個就代表前面有一層代理
+  const PLATFORM_HINTS = ['RENDER', 'RAILWAY_ENVIRONMENT', 'RAILWAY_PROJECT_ID'];
+  if (PLATFORM_HINTS.some((k) => process.env[k])) return 1;
   return 'loopback';
 }
 app.set('trust proxy', trustProxySetting());
