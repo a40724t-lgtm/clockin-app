@@ -6,7 +6,7 @@ const ExcelJS = require('exceljs');
 const checks = require('./checks');
 const L = require('./leave');
 const fs = require('fs');
-const { defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET } = require('./db');
+const { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET } = require('./db');
 
 const app = express();
 
@@ -559,7 +559,7 @@ app.get('/api/admin/overview', (req, res) => {
 
 // 員工管理
 app.get('/api/admin/employees', (req, res) => {
-  res.json(db.prepare('SELECT id,name,pin,note,is_sample,created_at FROM employees WHERE active=1 ORDER BY id').all());
+  res.json(db.prepare('SELECT id,name,pin,note,email,is_sample,created_at FROM employees WHERE active=1 ORDER BY id').all());
 });
 function validateEmp(body, id) {
   const name = String(body.name || '').trim();
@@ -567,13 +567,15 @@ function validateEmp(body, id) {
   if (!name) return '請輸入姓名';
   if (name.length > 30) return '姓名太長';
   if (!/^\d{4}$/.test(pin)) return 'PIN 碼必須是 4 位數字';
+  const email = String(body.email || '').trim();
+  if (email && (email.length > 120 || !/^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(email))) return 'Email 格式錯誤';
   const dup = db.prepare('SELECT id FROM employees WHERE name=? AND active=1 AND id<>?').get(name, id || 0);
   if (dup) return '已有同名員工，請加上區別（例如 王小明-門市）';
   return null;
 }
 app.post('/api/admin/employees', (req, res) => {
   const err = validateEmp(req.body || {}); if (err) return res.status(400).json({ error: err });
-  const r = db.prepare('INSERT INTO employees(name,pin,note,created_at) VALUES(?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), Date.now());
+  const r = db.prepare('INSERT INTO employees(name,pin,note,email,created_at) VALUES(?,?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), String(req.body.email || '').trim(), Date.now());
   audit('新增員工', `新增員工「${req.body.name.trim()}」`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
@@ -582,9 +584,10 @@ app.put('/api/admin/employees/:id', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(id);
   if (!emp) return res.status(404).json({ error: '找不到員工' });
   const err = validateEmp(req.body || {}, id); if (err) return res.status(400).json({ error: err });
-  db.prepare('UPDATE employees SET name=?, pin=?, note=? WHERE id=?').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), id);
+  const email = String(req.body.email || '').trim();
+  db.prepare('UPDATE employees SET name=?, pin=?, note=?, email=? WHERE id=?').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), email, id);
   if (String(req.body.pin).trim() !== emp.pin) db.prepare("DELETE FROM sessions WHERE kind='employee' AND employee_id=?").run(id);
-  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}`);
+  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}`);
   res.json({ ok: true });
 });
 app.delete('/api/admin/employees/:id', (req, res) => {
@@ -1088,7 +1091,8 @@ app.put('/api/admin/leave-balances/:id', (req, res) => {
 });
 
 // 薪資統整（試算）
-require('./payroll')({ app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay });
+const payroll = require('./payroll')({ app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay });
+require('./payslip-mail')({ app, db, getSetting, setSetting, getSettings, audit, fmtDateTime, getPayroll: payroll.getPayroll, requireEmployee, DEFAULT_MAIL_BODY });
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 

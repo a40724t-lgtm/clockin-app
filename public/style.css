@@ -150,7 +150,7 @@ a { color: var(--brand-text); }
 
 /* ---------- 表單 ---------- */
 label, .label { display: block; font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); margin-bottom: 6px; }
-input[type=text], input[type=password], input[type=date], input[type=time], input[type=number], select, textarea {
+input[type=text], input[type=email], input[type=password], input[type=date], input[type=time], input[type=number], select, textarea {
   width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid var(--line-strong); border-radius: var(--r);
   background: var(--surface); color: var(--text); transition: border-color .15s, box-shadow .15s;
 }
@@ -565,7 +565,7 @@ th:last-child, td:last-child { padding-right: 18px; }
    請假
    ========================================================= */
 /* 員工頁：打卡 / 請假 切換 */
-.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 16px 0 0; border-radius: var(--r); background: var(--surface-3); }
+.seg { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 4px; margin: 16px 0 0; border-radius: var(--r); background: var(--surface-3); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 0; border-radius: 11px; background: transparent; color: var(--text-2); font-weight: 600; font-size: var(--fs-base); }
 .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--sh-1); }
 .seg .count { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: var(--warning-bg); color: var(--warning); font-size: var(--fs-xs); }
@@ -770,3 +770,40 @@ table.pay-lines tfoot td { font-weight: 700; background: var(--surface-2); borde
 .pay-table td.wrap.pay-who { min-width: 236px; max-width: 250px; }
 .pay-table td.wrap:not(.pay-who) { min-width: 150px; max-width: 180px; }
 .pay-table th, .pay-table td { padding-left: 10px; padding-right: 10px; }
+
+/* ---------- 薪資單 Email ---------- */
+.alert.ok { background: var(--success-bg); color: var(--success); border-color: var(--success-line); }
+.row3 { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 12px; }
+@media (max-width: 640px) { .row3 { grid-template-columns: 1fr; } }
+.mail-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.check-inline { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--fs-sm); font-weight: 400; color: var(--text-2); cursor: pointer; }
+.check-inline input { width: 16px; height: 16px; margin: 0; }
+.mail-help { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 14px; background: var(--surface-2); font-size: var(--fs-sm); }
+.mail-help summary { cursor: pointer; font-weight: 600; color: var(--brand-text); }
+.mail-help ol { margin: 10px 0 4px; padding-left: 20px; display: grid; gap: 4px; }
+.set-foot.wrap, #mailForm .set-foot { flex-wrap: wrap; }
+code { font-family: var(--mono, ui-monospace, monospace); font-size: .92em; background: var(--surface-3); padding: 1px 5px; border-radius: 5px; }
+.send-st { display: block; margin-top: 4px; font-size: var(--fs-xs); white-space: nowrap; }
+.send-st.ok { color: var(--success); } .send-st.err { color: var(--danger); } .send-st.muted { color: var(--muted); }
+table.send-list { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+table.send-list th, table.send-list td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+table.send-list th { font-size: var(--fs-xs); color: var(--muted); font-weight: 600; background: var(--surface-2); }
+table.send-list td.ck { width: 36px; } table.send-list td.ck input { width: 18px; height: 18px; margin: 0; }
+table.send-list tr.dis td { color: var(--muted); }
+table.send-list .em { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; word-break: break-all; }
+.send-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: var(--fs-sm); }
+.send-meta dt { color: var(--muted); } .send-meta dd { margin: 0; font-weight: 600; word-break: break-all; }
+.send-wrap { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; max-height: 46vh; overflow-y: auto; }
+.email-cell { font-size: 13px; word-break: break-all; }
+.seg button { padding: 0 6px; }
+.slip-list { display: grid; gap: 10px; }
+.slip-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
+.slip-item .s-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--brand-soft); color: var(--brand-text); flex: none; }
+.slip-main { flex: 1; min-width: 0; }
+.slip-t { font-weight: 700; }
+.slip-s { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
+.empty-card { display: grid; justify-items: center; gap: 6px; padding: 28px 18px; text-align: center; }
+.empty-card .s-ic { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px; background: var(--surface-3); color: var(--muted); }
+.slip-note { margin: 14px 4px 0; display: flex; gap: 6px; align-items: flex-start; }
+.pay-table td:last-child .cell-actions { flex-wrap: wrap; max-width: 116px; gap: 4px; }
+.pay-table td:last-child { min-width: 116px; }

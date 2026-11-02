@@ -327,7 +327,9 @@ function setTab(t) {
   document.querySelectorAll('[data-etab]').forEach((b) => { const on = b.dataset.etab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
   $('punchPane').classList.toggle('hidden', t !== 'punch');
   $('leavePane').classList.toggle('hidden', t !== 'leave');
+  $('slipPane').classList.toggle('hidden', t !== 'slip');
   if (t === 'leave') loadLeave();
+  if (t === 'slip') loadSlips();
 }
 document.querySelectorAll('[data-etab]').forEach((b) => b.onclick = () => setTab(b.dataset.etab));
 
@@ -534,3 +536,34 @@ $('leaveForm').onsubmit = async (e) => {
 };
 
 init();
+
+// =========================================================
+// 我的薪資單（只顯示公司已確認的月份）
+// =========================================================
+async function loadSlips() {
+  $('slipList').innerHTML = '<div class="card empty-card muted">載入中…</div>';
+  try {
+    const r = await api('/api/payslips', { headers: auth() });
+    $('slipHint').textContent = r.list.length ? `共 ${r.list.length} 份` : '';
+    $('slipNote').innerHTML = `${icon('info', 14)} 只會顯示公司已確認的月份。${r.protected ? `PDF 已加密保護，${esc(r.password_hint)}。` : ''}試算僅供參考，請以會計／勞動法規為準。`;
+    $('slipList').innerHTML = r.list.map((x) => `<div class="card slip-item"><span class="s-ic">${icon('fileText', 22)}</span>
+      <div class="slip-main"><div class="slip-t">${esc(x.label)} 薪資單</div><div class="slip-s">實發 NT$ ${Math.round(x.net).toLocaleString('en-US')}・確認於 ${esc(x.confirmed_text.slice(0, 10))}</div></div>
+      <button class="btn secondary sm" data-slip="${x.month}" aria-label="下載 ${esc(x.label)} 薪資單 PDF">${icon('download', 16)}下載 PDF</button></div>`).join('')
+      || `<div class="card empty-card"><span class="s-ic">${icon('wallet', 26)}</span><b>目前還沒有薪資單</b><span class="muted">公司確認每月薪資後，就可以在這裡下載 PDF。</span></div>`;
+    $('slipList').querySelectorAll('[data-slip]').forEach((b) => b.onclick = () => downloadSlip(b.dataset.slip, b));
+  } catch (e) { if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); } $('slipList').innerHTML = ''; toast(e.message, 'err'); }
+}
+async function downloadSlip(month, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/payslips/${month}.pdf`, { headers: auth() });
+    if (!res.ok) { let msg = '下載失敗'; try { msg = (await res.json()).error || msg; } catch (e) {} throw Object.assign(new Error(msg), { status: res.status }); }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `薪資單_${month}_${(me && me.employee && me.employee.name) || ''}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    toast('已下載薪資單', 'ok');
+  } catch (e) { if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); } toast(e.message, 'err'); }
+  finally { btn.disabled = false; }
+}

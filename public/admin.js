@@ -224,9 +224,9 @@ async function loadEmployees() { try { employees = await api('/api/admin/employe
 async function renderEmployees() {
   await loadEmployees();
   $('empBody').innerHTML = employees.map((e) => `<tr><td><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></td>
-    <td><span class="pin-pill">${esc(e.pin)}</span></td><td class="muted">${esc(e.note) || '—'}</td>
+    <td><span class="pin-pill">${esc(e.pin)}</span></td><td class="email-cell">${e.email ? `${esc(e.email)}${isDemoEmail(e.email) ? ' <span class="badge b-neutral" title="example.com 為示範用保留網域，系統不會寄出">示範地址</span>' : ''}` : '<span class="badge b-warning">未填寫</span>'}</td><td class="muted">${esc(e.note) || '—'}</td>
     <td><div class="cell-actions"><button class="btn secondary sm" data-eedit="${e.id}">${icon('pencil', 15)}編輯</button><button class="btn danger-ghost sm" data-edel="${e.id}">${icon('trash', 15)}移除</button></div></td></tr>`).join('')
-    || emptyRow(4, '還沒有員工', '按右上角「新增員工」開始建立', 'users');
+    || emptyRow(5, '還沒有員工', '按右上角「新增員工」開始建立', 'users');
   $('empBody').querySelectorAll('[data-eedit]').forEach((b) => b.onclick = () => empModal(employees.find((e) => e.id == b.dataset.eedit)));
   $('empBody').querySelectorAll('[data-edel]').forEach((b) => b.onclick = () => {
     const e = employees.find((x) => x.id == b.dataset.edel);
@@ -235,10 +235,12 @@ async function renderEmployees() {
   });
 }
 function empModal(e) {
-  const isNew = !e; e = e || { name: '', pin: String(Math.floor(1000 + Math.random() * 9000)), note: '' };
+  const isNew = !e; e = e || { name: '', pin: String(Math.floor(1000 + Math.random() * 9000)), note: '', email: '' };
   modal(`<form class="form-grid">
     <div><label>姓名</label><input type="text" name="name" value="${esc(e.name)}" required maxlength="30"></div>
     <div><label>PIN 碼（4 位數字，員工打卡時使用）</label><input type="text" name="pin" value="${esc(e.pin)}" inputmode="numeric" pattern="\\d{4}" maxlength="4" required class="mono" style="letter-spacing:.3em"></div>
+    <div><label for="empEmail">Email（選填，用來寄送 PDF 薪資單）</label><input type="email" id="empEmail" name="email" value="${esc(e.email || '')}" maxlength="120" placeholder="例如：wang@gmail.com" spellcheck="false" autocomplete="off">
+      ${isDemoEmail(e.email) ? '<p class="help" style="margin:4px 0 0">目前是示範地址（example.com 為保留網域，系統不會寄出），請改成員工真正的 Email。</p>' : ''}</div>
     <div><label>備註（選填）</label><input type="text" name="note" value="${esc(e.note)}" placeholder="例如：門市、兼職"></div>
     ${actions('儲存')}</form>`,
   async (f) => {
@@ -332,10 +334,10 @@ $('checksForm').onsubmit = async (e) => {
 
 // ---------- 修改紀錄 ----------
 const AUDIT_IC = { 新增員工: 'plus', 修改員工: 'user', 移除員工: 'trash', 補登打卡: 'plus', 修改打卡: 'pencil', 刪除打卡: 'trash', 修改設定: 'sliders', 修改打卡限制: 'shield', 變更密碼: 'key',
-  核准請假: 'calendarCheck', 修改薪資設定: 'banknote', 修改薪資規則: 'scale', 薪資調整: 'wallet', 確認薪資: 'lock', 解除薪資確認: 'unlock', 退回請假: 'calendarX', 撤銷請假: 'undo', 取消請假: 'undo', 調整特休額度: 'palm', 新增假別: 'tag', 修改假別: 'tag' };
+  核准請假: 'calendarCheck', 修改薪資設定: 'banknote', 修改薪資規則: 'scale', 薪資調整: 'wallet', 確認薪資: 'lock', 解除薪資確認: 'unlock', 退回請假: 'calendarX', 撤銷請假: 'undo', 取消請假: 'undo', 調整特休額度: 'palm', 新增假別: 'tag', 修改假別: 'tag', 寄送薪資單: 'send', 修改寄信設定: 'mail', 寄送測試信: 'send' };
 async function loadAudit() {
   try { const list = await api('/api/admin/audit');
-    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : /薪資/.test(a.action) ? 'b-info' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
+    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : /薪資|寄信|測試信/.test(a.action) ? 'b-info' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
       || emptyRow(3, '尚無修改紀錄', '管理員的變更會記錄在這裡', 'history');
   } catch (e) { handle(e); }
 }
@@ -595,6 +597,7 @@ $('addType').onclick = () => typeModal(null);
 // =========================================================
 // 薪資統整
 // =========================================================
+const isDemoEmail = (e) => /@(.+\.)?(example\.(com|net|org)|[^@]*\.(example|test|invalid|localhost))$/i.test(String(e || '').trim());
 let payMonth = null, payCur = null, curPtab = 'sum', paySet = null;
 const NT = (n) => Math.round(n || 0).toLocaleString('en-US');
 const ntd = (n) => `NT$ ${NT(n)}`;
@@ -618,7 +621,18 @@ $('payMonth').onchange = () => { if (/^\d{4}-\d{2}$/.test($('payMonth').value)) 
 $('payPrev').onclick = () => { payMonth = shiftMonth(payMonth, -1); $('payMonth').value = payMonth; loadPayroll(); };
 $('payNext').onclick = () => { payMonth = shiftMonth(payMonth, 1); $('payMonth').value = payMonth; loadPayroll(); };
 $('payExport').onclick = () => { location.href = `/api/admin/payroll/${payMonth}/export`; toast('正在下載 Excel…'); };
-$('payPrintAll').onclick = () => window.open(`/admin/payslip?month=${payMonth}`, '_blank');
+$('payZip').onclick = () => { if (!payCur || !payCur.employees.length) return toast('這個月份沒有薪資資料', 'err'); location.href = `/api/admin/payroll/${payMonth}/payslips.zip`; toast('正在下載全部 PDF（zip）…'); };
+$('paySend').onclick = () => openSendDialog(null);
+let paySends = null;
+function sendStatus(id) {
+  const r = paySends && paySends.recipients.find((x) => x.id === id);
+  if (!r) return '';
+  if (r.last_sent) return `<span class="send-st ok">${icon('check', 12)} 已寄送 ${esc(r.last_sent.at_text.slice(5))}${r.sent_count > 1 ? `（${r.sent_count} 次）` : ''}</span>`;
+  if (r.last && r.last.status === 'failed') return `<span class="send-st err" title="${esc(r.last.error)}">${icon('alertCircle', 12)} 寄送失敗</span>`;
+  if (r.state === 'no_email') return '<span class="send-st muted">未填 Email</span>';
+  if (r.state === 'demo') return '<span class="send-st muted">示範地址</span>';
+  return '<span class="send-st muted">尚未寄送</span>';
+}
 
 function leaveCell(e) {
   if (!e.leaves.length) return '<span class="muted">—</span>';
@@ -627,9 +641,11 @@ function leaveCell(e) {
 async function loadPayroll() {
   const month = payMonth;
   try {
-    const p = await api('/api/admin/payroll?month=' + month);
+    const [p, sends] = await Promise.all([api('/api/admin/payroll?month=' + month), api(`/api/admin/payroll/${month}/sends`).catch(() => null)]);
     if (month !== payMonth) return;
-    payCur = p;
+    payCur = p; paySends = sends;
+    $('paySend').disabled = !p.employees.length; $('payZip').disabled = !p.employees.length;
+    $('paySend').title = p.confirmed ? '' : '確認本月薪資後才能寄送';
     const [y, m] = month.split('-').map(Number);
     $('payStatus').innerHTML = (p.confirmed ? `<span class="badge b-success">${icon('lock')}已確認・${esc(p.confirmed_text)}</span>` : `<span class="badge b-warning">${icon('hourglass')}試算中・未確認</span>`)
       + (p.in_progress && !p.confirmed ? `<span class="badge b-neutral">${icon('info')}本月尚未結束</span>` : '');
@@ -647,9 +663,10 @@ async function loadPayroll() {
       <td class="wrap">${leaveCell(e)}</td>
       <td class="num r">${NT(e.gross)}</td><td class="num r neg">${e.deduct_total ? '−' + NT(e.deduct_total) : '0'}</td>
       <td class="num r"><b class="pay-net">${NT(e.net)}</b></td>
-      <td><div class="cell-actions"><button class="btn secondary sm" data-pdetail="${e.id}">${icon('list', 15)}明細</button><a class="btn ghost sm icon-only" href="/admin/payslip?month=${month}&employee_id=${e.id}" target="_blank" rel="noopener" title="薪資單" aria-label="${esc(e.name)} 的薪資單">${icon('printer', 16)}</a></div></td></tr>`).join('')
+      <td><div class="cell-actions"><button class="btn secondary sm" data-pdetail="${e.id}">${icon('list', 15)}明細</button><a class="btn ghost sm icon-only" href="/api/admin/payroll/${month}/payslip/${e.id}.pdf" title="下載 PDF 薪資單" aria-label="下載 ${esc(e.name)} 的 PDF 薪資單">${icon('fileDown', 16)}</a><button class="btn ghost sm icon-only" data-psend="${e.id}" title="寄送薪資單" aria-label="寄送薪資單給 ${esc(e.name)}">${icon('send', 16)}</button></div>${sendStatus(e.id)}</td></tr>`).join('')
       || emptyRow(9, '這個月份沒有薪資資料', '沒有出勤紀錄，或員工在此月份之後才建立', 'wallet');
     $('payBody').querySelectorAll('[data-pdetail]').forEach((b) => b.onclick = () => payDetail(p.employees.find((x) => x.id == b.dataset.pdetail)));
+    $('payBody').querySelectorAll('[data-psend]').forEach((b) => b.onclick = () => openSendDialog([Number(b.dataset.psend)]));
   } catch (e) { handle(e); }
 }
 function payLines(lines, sign) {
@@ -676,7 +693,7 @@ function payDetail(e) {
         <div><label for="adjNote">備註（選填）</label><input type="text" id="adjNote" name="note" maxlength="200" placeholder="例如：10 月業績達標"></div></div>
     </fieldset>`}
     <p class="help" style="margin:0">${icon('info', 14)} 試算僅供參考，請以會計／勞動法規為準。</p>
-    <div class="actions"><a class="btn ghost" href="/admin/payslip?month=${payCur.month}&employee_id=${e.id}" target="_blank" rel="noopener">${icon('printer', 16)}薪資單</a><span style="flex:1"></span><button type="button" class="btn secondary" data-cancel>關閉</button>${locked ? '<button type="submit" class="btn hidden">關閉</button>' : `<button type="submit" class="btn">${icon('plus', 16)}加入調整項</button>`}</div>
+    <div class="actions"><a class="btn ghost" href="/api/admin/payroll/${payCur.month}/payslip/${e.id}.pdf">${icon('fileDown', 16)}下載 PDF</a><button type="button" class="btn ghost" data-dsend>${icon('send', 16)}寄送</button><span style="flex:1"></span><button type="button" class="btn secondary" data-cancel>關閉</button>${locked ? '<button type="submit" class="btn hidden">關閉</button>' : `<button type="submit" class="btn">${icon('plus', 16)}加入調整項</button>`}</div>
   </form>`,
   async (f) => {
     if (locked) return;
@@ -684,6 +701,7 @@ function payDetail(e) {
     toast('已加入調整項', 'ok'); await loadPayroll(); reopenDetail(e.id);
   }, { title: `${e.name}・薪資明細`, icon: 'wallet' });
   $('modal').classList.add('wide'); if (document.activeElement) document.activeElement.blur(); $('modal').scrollTop = 0;
+  $('modal').querySelector('[data-dsend]').onclick = () => { closeModal(); openSendDialog([e.id]); };
   $('modal').querySelectorAll('[data-deladj]').forEach((b) => b.onclick = async () => {
     try { await api(`/api/admin/payroll/${payCur.month}/adjustments/${b.dataset.deladj}`, { method: 'DELETE' }); toast('已刪除調整項', 'ok'); await loadPayroll(); reopenDetail(e.id); } catch (err) { handle(err); }
   });
@@ -707,6 +725,7 @@ $('payConfirm').onclick = () => {
 
 // 薪資設定
 async function loadPaySettings() {
+  loadMailSettings();
   try {
     const r = await api('/api/admin/payroll/settings'); paySet = r;
     const itemsOf = (e, k) => e.pay_items.filter((i) => i.kind === k).map((i) => `<span class="sub" style="margin:0">${esc(i.name)} ${NT(i.amount)}</span>`).join('') || '<span class="muted">—</span>';
@@ -739,6 +758,114 @@ async function loadPaySettings() {
     });
   } catch (e) { handle(e); }
 }
+// ---------- 寄送薪資單 ----------
+function infoModal(html, title, ic = 'info', okText = '知道了', onOk = null) {
+  modal(`<form class="form-grid">${html}<div class="actions"><button type="button" class="btn secondary" data-cancel>關閉</button>${onOk ? `<button type="submit" class="btn">${okText}</button>` : `<button type="submit" class="btn hidden">關閉</button>`}</div></form>`, async () => { if (onOk) onOk(); }, { title, icon: ic });
+}
+async function openSendDialog(ids) {
+  if (!payCur) return;
+  const month = payCur.month, [y, m] = month.split('-').map(Number);
+  let d;
+  try { d = await api(`/api/admin/payroll/${month}/sends`); } catch (e) { return handle(e); }
+  if (!d.confirmed) return infoModal(`<div class="alert warn">${icon('lock', 18)}<div><b>${y} 年 ${m} 月薪資尚未確認。</b><br>為避免寄出還會變動的金額，只有「已確認」的月份可以寄送薪資單。請先檢查無誤後按「確認 ${m} 月薪資」。</div></div>`, '寄送薪資單', 'send');
+  if (!d.smtp.configured) return infoModal(`<div class="alert warn">${icon('mail', 18)}<div><b>尚未完成寄信設定。</b><br>請到「薪資設定」填寫 SMTP 主機、帳號密碼與寄件者 Email（可使用公司的 Gmail）。</div></div>`, '寄送薪資單', 'send', '前往寄信設定', () => { setPtab('set'); setTimeout(() => $('mailForm').scrollIntoView({ behavior: 'smooth' }), 300); });
+  const list = d.recipients.filter((r) => !ids || ids.includes(r.id));
+  const can = (r) => r.state === 'ready';
+  const row = (r) => {
+    const st = r.state !== 'ready' ? `<span class="badge b-neutral">${esc(r.note)}</span>`
+      : r.last_sent ? `<span class="badge b-warning">${icon('alert')}已於 ${esc(r.last_sent.at_text)} 寄過</span>`
+      : r.last && r.last.status === 'failed' ? `<span class="badge b-danger">${icon('alertCircle')}上次失敗</span>` : `<span class="badge b-success">${icon('send')}將寄送</span>`;
+    return `<tr class="${can(r) ? '' : 'dis'}"><td class="ck"><input type="checkbox" data-rid="${r.id}" ${can(r) ? '' : 'disabled'} ${can(r) && !r.last_sent ? 'checked' : ''} aria-label="寄給 ${esc(r.name)}"></td>
+      <td><span class="who">${avatar(r.name, 'sm')}${esc(r.name)}</span></td><td class="em">${esc(r.email) || '—'}</td><td class="num r">${NT(r.net)}</td><td>${st}</td></tr>`;
+  };
+  const pwText = { pin: '員工 PIN 碼', fixed: '固定密碼', none: '不加密' }[d.pdf_password_mode];
+  modal(`<form class="form-grid">
+    <dl class="send-meta"><dt>月份</dt><dd>${y} 年 ${m} 月（已確認）</dd><dt>寄件者</dt><dd>${esc(d.smtp.from)}</dd><dt>主旨</dt><dd>${esc(d.subject)}</dd><dt>附件</dt><dd>PDF 薪資單・開啟密碼：${pwText}</dd></dl>
+    <div><div class="label">收件人（請確認 Email 正確）</div>
+    <div class="send-wrap"><table class="send-list"><thead><tr><th></th><th>員工</th><th>Email</th><th class="r">實發</th><th>狀態</th></tr></thead><tbody>${list.map(row).join('') || '<tr><td colspan="5" class="muted">沒有可寄送的員工</td></tr>'}</tbody></table></div></div>
+    <div class="alert warn hidden" id="sdDup">${icon('alert', 18)}<div id="sdDupText"></div></div>
+    <p class="help" style="margin:0">寄出後無法收回。已寄過的員工預設不勾選，避免重複寄送；示範地址（example.com）與未填 Email 的員工會略過。</p>
+    <div class="actions"><button type="button" class="btn secondary" data-cancel>取消</button><button type="submit" class="btn" id="sdGo">${icon('send', 16)}確認寄送</button></div>
+  </form>`, async (f) => {
+    const chosen = [...f.querySelectorAll('[data-rid]:checked')].map((x) => Number(x.dataset.rid));
+    if (!chosen.length) throw new Error('請至少勾選一位員工');
+    const force = chosen.some((id) => list.find((r) => r.id === id).last_sent);
+    $('sdGo').innerHTML = `${icon('hourglass', 16)}寄送中…`;
+    const r = await api(`/api/admin/payroll/${month}/send`, { method: 'POST', body: { employee_ids: chosen, force } });
+    setTimeout(() => showSendResult(r, month), 0);
+    loadPayroll();
+  }, { title: ids && ids.length === 1 ? `寄送薪資單給 ${list[0] ? list[0].name : ''}` : `寄送 ${m} 月薪資單`, icon: 'send' });
+  $('modal').classList.add('wide');
+  const sync = () => {
+    const ck = [...$('modal').querySelectorAll('[data-rid]:checked')];
+    const dup = ck.map((x) => list.find((r) => r.id == x.dataset.rid)).filter((r) => r.last_sent);
+    $('sdDup').classList.toggle('hidden', !dup.length);
+    $('sdDupText').innerHTML = dup.length ? `<b>${dup.map((r) => esc(r.name)).join('、')}</b> 已經寄過本月薪資單，確認後會<b>再寄一次</b>。` : '';
+    $('sdGo').disabled = !ck.length;
+    $('sdGo').innerHTML = `${icon('send', 16)}${ck.length ? `確認寄送 ${ck.length} 封` : '請勾選收件人'}`;
+  };
+  $('modal').querySelectorAll('[data-rid]').forEach((x) => x.onchange = sync); sync();
+}
+function showSendResult(r, month) {
+  const lab = { sent: ['b-success', 'check', '已寄出'], failed: ['b-danger', 'alertCircle', '失敗'], skipped: ['b-neutral', 'info', '略過'] };
+  infoModal(`<div class="alert ${r.failed ? 'danger' : 'ok'}">${icon(r.failed ? 'alertCircle' : 'check', 18)}<div>寄出 <b>${r.sent}</b> 封${r.failed ? `，失敗 <b>${r.failed}</b> 封` : ''}${r.skipped ? `，略過 ${r.skipped} 位` : ''}。</div></div>
+    <div class="send-wrap"><table class="send-list"><tbody>${r.results.map((x) => `<tr><td><b>${esc(x.name)}</b><div class="em muted">${esc(x.email) || '—'}</div></td><td><span class="badge ${lab[x.status][0]}">${icon(lab[x.status][1])}${lab[x.status][2]}</span>${x.error ? `<div class="help" style="margin:4px 0 0">${esc(x.error)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>`, `${month} 寄送結果`, 'send');
+}
+
+// ---------- 寄信設定 ----------
+let mailCfg = null;
+const PRESETS = { gmail: { host: 'smtp.gmail.com', port: 465, secure: '1' }, m365: { host: 'smtp.office365.com', port: 587, secure: '0' } };
+function mailBody() {
+  return { host: $('mHost').value.trim(), port: Number($('mPort').value), secure: $('mSecure').value === '1', user: $('mUser').value.trim(), password: $('mPass').value, clear_password: $('mPassClear').checked,
+    from_name: $('mFromName').value.trim(), from_addr: $('mFromAddr').value.trim(), subject: $('mSubject').value, body: $('mBody').value,
+    pdf_password_mode: (document.querySelector('input[name=mPw]:checked') || {}).value || 'pin', pdf_password_fixed: $('mFixed').value };
+}
+function mailMsg(kind, html) { const el = $('mailResult'); el.className = `alert ${kind}`; el.innerHTML = `${icon(kind === 'ok' ? 'check' : kind === 'info' ? 'hourglass' : 'alertCircle', 18)}<div>${html}</div>`; }
+async function loadMailSettings() {
+  try {
+    const c = mailCfg = await api('/api/admin/smtp');
+    $('mHost').value = c.host; $('mPort').value = c.port; $('mSecure').value = c.secure ? '1' : '0'; $('mUser').value = c.user;
+    $('mPass').value = ''; $('mPass').placeholder = c.has_password ? '已設定（不會顯示），留空表示不變更' : '尚未設定';
+    $('mPassClear').checked = false; $('mPassClearWrap').classList.toggle('hidden', !c.has_password || c.env);
+    $('mFromName').value = c.from_name || c.company_name || ''; $('mFromAddr').value = c.from_addr; $('mSubject').value = c.subject; $('mBody').value = c.body;
+    document.querySelectorAll('input[name=mPw]').forEach((x) => (x.checked = x.value === c.pdf_password_mode));
+    $('mFixed').value = ''; $('mFixed').placeholder = c.has_fixed_password ? '已設定（不會顯示），留空表示不變更' : '尚未設定';
+    syncMailPw();
+    $('mailEnv').classList.toggle('hidden', !c.env);
+    ['mHost', 'mPort', 'mSecure', 'mUser', 'mPass'].forEach((id) => ($(id).disabled = c.env)); $('mailPresets').classList.toggle('hidden', c.env);
+    $('mailResult').classList.add('hidden');
+  } catch (e) { handle(e); }
+}
+function syncMailPw() { $('mFixedWrap').classList.toggle('hidden', ((document.querySelector('input[name=mPw]:checked') || {}).value) !== 'fixed'); }
+document.querySelectorAll('input[name=mPw]').forEach((x) => (x.onchange = syncMailPw));
+document.querySelectorAll('[data-preset]').forEach((b) => b.onclick = () => {
+  const p = PRESETS[b.dataset.preset]; $('mHost').value = p.host; $('mPort').value = p.port; $('mSecure').value = p.secure;
+  if (!$('mFromAddr').value && $('mUser').value.includes('@')) $('mFromAddr').value = $('mUser').value;
+  toast(`已套用 ${b.textContent} 設定，請填寫帳號與密碼`, 'ok');
+});
+$('mUser').onchange = () => { if (!$('mFromAddr').value && $('mUser').value.includes('@')) $('mFromAddr').value = $('mUser').value.trim(); };
+$('mPort').onchange = () => { if ($('mPort').value === '465') $('mSecure').value = '1'; else if (['587', '25', '2525'].includes($('mPort').value)) $('mSecure').value = '0'; };
+$('mBodyReset').onclick = () => { if (mailCfg) $('mBody').value = mailCfg.default_body; };
+$('mailForm').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const btn = ev.submitter || $('mailForm').querySelector('[type=submit]'); btn.disabled = true;
+  try { await api('/api/admin/smtp', { method: 'PUT', body: mailBody() }); toast('寄信設定已儲存', 'ok'); await loadMailSettings(); } catch (err) { handle(err); } finally { btn.disabled = false; }
+};
+$('mailVerify').onclick = async () => {
+  const b = mailBody();
+  if (!b.host && !(mailCfg && mailCfg.env)) return mailMsg('danger', '請先填寫 SMTP 主機');
+  $('mailVerify').disabled = true; mailMsg('info', `正在連線 ${esc(b.host || mailCfg.host)}:${esc(b.port || mailCfg.port)}…（不會寄出任何信件）`);
+  try {
+    const r = await api('/api/admin/smtp/verify', { method: 'POST', body: b });
+    mailMsg(r.ok ? 'ok' : 'danger', `<b>${esc(r.message)}</b><br><span style="opacity:.85">${esc(r.host)}:${r.port}・${r.secure ? 'SSL/TLS' : 'STARTTLS／不加密'}・${r.ms} 毫秒・未寄出任何信件</span>`);
+  } catch (err) { mailMsg('danger', esc(err.message)); } finally { $('mailVerify').disabled = false; }
+};
+$('mailTest').onclick = () => {
+  if (!mailCfg || !mailCfg.configured) return mailMsg('danger', '請先填寫 SMTP 主機與寄件者 Email，並按「儲存寄信設定」');
+  modal(`<form class="form-grid"><p style="margin:0">會用目前<b>已儲存</b>的設定寄一封測試信（不含薪資資料），確認寄信設定正確。</p>
+    <div><label for="mtTo">收件 Email</label><input type="email" id="mtTo" name="to" required value="${esc(mailCfg.from_addr || '')}" spellcheck="false"></div>${actions('寄送測試信')}</form>`,
+  async (f) => { const r = await api('/api/admin/smtp/test', { method: 'POST', body: formData(f) }); toast(r.message, 'ok'); mailMsg('ok', esc(r.message)); }, { title: '寄送測試信', icon: 'send' });
+};
 $('payRulesForm').onsubmit = async (ev) => {
   ev.preventDefault();
   const leave_types = [...$('prTypes').querySelectorAll('tr')].map((tr) => {

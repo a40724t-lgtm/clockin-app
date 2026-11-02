@@ -141,6 +141,21 @@ if (!ltCols.includes('pay_ratio')) {
     db.prepare('UPDATE leave_types SET pay_ratio=?, pay_cap_days=? WHERE id=?').run(r, cap, t.id);
   }
 }
+// 薪資單 Email 寄送
+if (!empCols.includes('email')) db.exec("ALTER TABLE employees ADD COLUMN email TEXT DEFAULT ''");
+db.exec(`
+CREATE TABLE IF NOT EXISTS payslip_sends (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  month TEXT NOT NULL,
+  employee_id INTEGER NOT NULL,
+  email TEXT NOT NULL,
+  status TEXT NOT NULL,              -- sent 已寄出 / failed 失敗 / skipped 略過
+  error TEXT DEFAULT '',
+  message_id TEXT DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sends ON payslip_sends(month, employee_id);
+`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS payroll_adjustments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,7 +199,10 @@ if (!getSetting('lunch_start')) setSetting('lunch_start', '12:00');
 if (!getSetting('lunch_end')) setSetting('lunch_end', '13:00');
 if (!getSetting('lunch_enabled')) setSetting('lunch_enabled', '1');
 // 打卡地點限制（預設全部關閉）
-const defaults = { payroll_late_deduct: '0', payroll_ot_unit: '1', payroll_clip_early: '1', net_check_enabled: '0', net_allowlist: '', loc_check_enabled: '0', loc_lat: '', loc_lng: '', loc_radius: '150', loc_max_accuracy: '100',
+const DEFAULT_MAIL_BODY = '{姓名} 您好：\n\n附件為您 {月份} 的薪資單（PDF）。\n{密碼說明}\n\n如對內容有任何疑問，請直接回覆此信或與我們聯絡。\n\n※ 試算僅供參考，請以會計／勞動法規為準。\n\n{公司}';
+const defaults = { smtp_host: '', smtp_port: '465', smtp_secure: '1', smtp_user: '', smtp_pass: '', smtp_from_name: '', smtp_from_addr: '',
+  mail_subject: '【{公司}】{月份} 薪資單', mail_body: DEFAULT_MAIL_BODY, pdf_password_mode: 'pin', pdf_password_fixed: '',
+  payroll_late_deduct: '0', payroll_ot_unit: '1', payroll_clip_early: '1', net_check_enabled: '0', net_allowlist: '', loc_check_enabled: '0', loc_lat: '', loc_lng: '', loc_radius: '150', loc_max_accuracy: '100',
   out_rule: 'relaxed', out_radius: '300' }; // 下班打卡規則：relaxed 放寬（公司網路或公司 300 公尺內，否則標記異地打卡）／strict 同上班
 for (const [k, v] of Object.entries(defaults)) if (getSetting(k) === undefined) setSetting(k, v);
 if (!getSetting('company_name')) setSetting('company_name', '我的公司');
@@ -279,6 +297,8 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
   db.prepare("UPDATE punches SET offsite=1, ip='111.250.12.34', ip_ok=0, lat=25.0478, lng=121.5170, accuracy=25, check_note='異地打卡：非公司網路，距公司範圍外' WHERE employee_id=? AND type='out' AND ts=?")
     .run(ids[0], taipeiToEpoch(days[2], '20:15'));
 
+  // 示範 Email（example.com 為保留網域，系統不會真的寄出）
+  ['a', 'b', 'c'].forEach((k, i) => db.prepare('UPDATE employees SET email=? WHERE id=?').run(`demo-${k}@example.com`, ids[i]));
   // 示範薪資設定（數值僅為示範，請依實際情況修改）
   const setPay = db.prepare('UPDATE employees SET pay_type=?, pay_amount=?, pay_items=?, pay_note=? WHERE id=?');
   const demoNote = '示範數值，勞健保自付額請依投保級距自行填寫';
@@ -345,4 +365,4 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
   }
 }
 
-module.exports = { defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET };
+module.exports = { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET };

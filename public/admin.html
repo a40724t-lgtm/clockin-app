@@ -184,7 +184,8 @@
       <div class="page-head"><div><h1>薪資統整</h1><p>依打卡、請假、加班自動試算每月薪資，可手動調整並確認鎖定</p></div>
         <div class="inline-actions" id="payActions">
           <button class="btn secondary" id="payExport"><i data-icon="sheet" data-size="18"></i>匯出 Excel</button>
-          <button class="btn secondary" id="payPrintAll"><i data-icon="printer" data-size="18"></i>列印薪資單</button>
+          <button class="btn secondary" id="payZip"><i data-icon="archive" data-size="18"></i>下載 PDF（全部）</button>
+          <button class="btn secondary" id="paySend"><i data-icon="send" data-size="18"></i>寄送薪資單</button>
           <button class="btn" id="payConfirm"><i data-icon="lock" data-size="18"></i>確認本月</button>
         </div></div>
       <div class="alert warn pay-disclaimer"><i data-icon="alert" data-size="18"></i><div><b>試算僅供參考，請以會計／勞動法規為準。</b>月薪換算時薪＝月薪 ÷ 30 ÷ 8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；目前沒有國定假日行事曆，週六、日上班一律視為「休息日加班」（前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67）。勞健保自付額請手動填寫。</div></div>
@@ -208,13 +209,63 @@
           <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="pLeave">0</div><div class="l" id="pLeavel">請假扣薪（NT$）</div></div>
         </div>
         <div class="card table-card"><div class="table-wrap"><table class="pay-table"><thead><tr><th>員工／計薪</th><th>出勤／工時</th><th>加班</th><th>出勤狀況</th><th>請假與薪資影響</th><th class="r">應發</th><th class="r">應扣</th><th class="r">實發</th><th></th></tr></thead><tbody id="payBody"></tbody></table></div></div>
-        <p class="help" style="margin-top:12px">點「明細」可查看每一筆計算、加入獎金或其他加扣項；確認後該月份會鎖定（保留確認當下的試算結果），之後修改打卡或請假不會影響已確認的月份。</p>
+        <p class="help" style="margin-top:12px">點「明細」可查看每一筆計算、加入獎金或其他加扣項；確認後該月份會鎖定（保留確認當下的試算結果），之後修改打卡或請假不會影響已確認的月份。薪資單以 PDF 寄到員工的 Email（只有「已確認」的月份可以寄送），員工也能在打卡頁的「薪資單」自行下載。</p>
       </div>
       <div data-ppane="set" class="hidden">
         <div class="card set-section" style="margin-bottom:18px">
           <div class="set-head"><span class="s-ic"><i data-icon="banknote"></i></span><div><h3>員工薪資</h3><p>每位員工的計薪方式、金額、固定津貼與固定扣項（勞保／健保自付額請依投保級距手動填寫，系統不自動計算）。</p></div></div>
           <div class="table-wrap"><table><thead><tr><th>員工</th><th>計薪方式</th><th class="r">金額</th><th>固定津貼</th><th>固定扣項</th><th>備註</th><th></th></tr></thead><tbody id="paySetBody"></tbody></table></div>
         </div>
+        <form class="card set-section" id="mailForm" style="margin-bottom:18px" novalidate>
+          <div class="set-head"><span class="s-ic"><i data-icon="mail"></i></span><div><h3>薪資單 Email 寄送設定</h3><p>透過公司的信箱（SMTP）把 PDF 薪資單寄給員工。密碼只存在伺服器，不會再顯示。</p></div></div>
+          <div class="set-body form-grid">
+            <div class="alert info hidden" id="mailEnv"><i data-icon="info" data-size="18"></i><div>目前使用伺服器的<b>環境變數</b>（SMTP_HOST 等）設定 SMTP，主機與帳號密碼無法在這裡修改。</div></div>
+            <div class="mail-presets" id="mailPresets"><span class="label" style="margin:0">快速套用：</span>
+              <button type="button" class="btn secondary sm" data-preset="gmail">Gmail</button>
+              <button type="button" class="btn secondary sm" data-preset="m365">Outlook／Microsoft 365</button></div>
+            <div class="row3">
+              <div><label for="mHost">SMTP 主機</label><input type="text" id="mHost" placeholder="smtp.gmail.com" autocomplete="off" spellcheck="false"></div>
+              <div><label for="mPort">連接埠</label><input type="number" id="mPort" min="1" max="65535" placeholder="465" inputmode="numeric"></div>
+              <div><label for="mSecure">加密方式</label><select id="mSecure"><option value="1">SSL/TLS（465）</option><option value="0">STARTTLS（587）／不加密</option></select></div>
+            </div>
+            <div class="row2">
+              <div><label for="mUser">帳號</label><input type="text" id="mUser" placeholder="例如：yourcompany@gmail.com" autocomplete="off" spellcheck="false"></div>
+              <div><label for="mPass">密碼<span class="muted" style="font-weight:400">（Gmail 請用「應用程式密碼」）</span></label><input type="password" id="mPass" autocomplete="new-password" placeholder="尚未設定">
+                <label class="check-inline hidden" id="mPassClearWrap"><input type="checkbox" id="mPassClear">清除已儲存的密碼</label></div>
+            </div>
+            <div class="row2">
+              <div><label for="mFromName">寄件者名稱</label><input type="text" id="mFromName" maxlength="60" placeholder="例如：我的公司 人事"></div>
+              <div><label for="mFromAddr">寄件者 Email</label><input type="email" id="mFromAddr" placeholder="通常與帳號相同" spellcheck="false"></div>
+            </div>
+            <div><label for="mSubject">信件主旨</label><input type="text" id="mSubject" maxlength="200"></div>
+            <div><label for="mBody">信件內文</label><textarea id="mBody" rows="12" maxlength="5000" class="plain"></textarea>
+              <p class="help">可使用：<code>{姓名}</code> <code>{月份}</code> <code>{公司}</code> <code>{密碼說明}</code>（依下方 PDF 密碼設定自動帶入說明）<code>{實發金額}</code>　<button type="button" class="btn ghost sm" id="mBodyReset">還原預設內文</button></p></div>
+            <div>
+              <div class="label" id="mPwLabel">PDF 開啟密碼</div>
+              <div class="opt-grid" style="grid-template-columns:repeat(3,1fr)" role="radiogroup" aria-labelledby="mPwLabel">
+                <label class="opt"><input type="radio" name="mPw" value="pin"><span>員工 PIN 碼（建議）<small>用員工打卡的 4 位數 PIN 開啟</small></span></label>
+                <label class="opt"><input type="radio" name="mPw" value="fixed"><span>固定密碼<small>所有員工使用同一組密碼</small></span></label>
+                <label class="opt"><input type="radio" name="mPw" value="none"><span>不加密<small>任何人拿到檔案都能開啟</small></span></label>
+              </div>
+              <div class="hidden" id="mFixedWrap" style="margin-top:10px"><label for="mFixed">固定密碼</label><input type="text" id="mFixed" maxlength="40" autocomplete="off" placeholder="尚未設定"></div>
+              <p class="help">寄給員工、以及員工自行下載的 PDF 會套用這個設定；管理員在後台下載的 PDF 不加密，方便公司留存。</p>
+            </div>
+            <details class="mail-help"><summary>如何使用 Gmail 寄信？</summary>
+              <ol>
+                <li>Google 帳戶需先開啟「兩步驟驗證」。</li>
+                <li>到 Google 帳戶 →「安全性」→「應用程式密碼」，建立一組密碼（16 個英文字母）。</li>
+                <li>按上方「Gmail」快速套用：主機 <code>smtp.gmail.com</code>、連接埠 <code>465</code>、SSL/TLS。</li>
+                <li>帳號填完整 Gmail 地址，密碼貼上應用程式密碼（不是平常登入的密碼）；寄件者 Email 請與帳號相同。</li>
+                <li>按「測試連線」確認可以登入，再按「寄送測試信」寄一封給自己。</li>
+              </ol>
+              <p class="help">Gmail 個人帳號每天約可寄 500 封。若主機商封鎖對外寄信連接埠，「測試連線」會顯示無法連線。</p>
+            </details>
+            <div class="alert hidden" id="mailResult" role="status"></div>
+          </div>
+          <div class="set-foot"><button class="btn" type="submit"><i data-icon="check" data-size="18"></i>儲存寄信設定</button>
+            <button class="btn secondary" type="button" id="mailVerify"><i data-icon="plug" data-size="18"></i>測試連線</button>
+            <button class="btn secondary" type="button" id="mailTest"><i data-icon="send" data-size="18"></i>寄送測試信</button></div>
+        </form>
         <form class="card set-section" id="payRulesForm">
           <div class="set-head"><span class="s-ic"><i data-icon="scale"></i></span><div><h3>計算規則</h3><p>依勞動基準法、勞工請假規則與性別平等工作法的預設值，可依公司規章調整。</p></div></div>
           <div class="set-body form-grid">
@@ -239,7 +290,7 @@
     <section data-sec="employees" class="hidden">
       <div class="page-head"><div><h1>員工管理</h1><p>新增員工並設定打卡用的 4 位數 PIN 碼</p></div>
         <button class="btn" id="addEmp"><i data-icon="plus" data-size="18"></i>新增員工</button></div>
-      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>員工</th><th>PIN 碼</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
+      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>員工</th><th>PIN 碼</th><th>Email（寄薪資單）</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
       <p class="help" style="margin-top:12px">移除員工後，他將無法再打卡，但歷史打卡紀錄會保留，仍可查詢與匯出。</p>
     </section>
 

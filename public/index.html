@@ -53,6 +53,7 @@
     <div class="seg" role="tablist" aria-label="功能切換">
       <button role="tab" id="tabPunch" data-etab="punch" class="on" aria-selected="true" aria-controls="punchPane"><i data-icon="clock" data-size="18"></i>打卡</button>
       <button role="tab" id="tabLeave" data-etab="leave" aria-selected="false" aria-controls="leavePane"><i data-icon="palm" data-size="18"></i>請假<span class="count" id="leavePendCount"></span></button>
+      <button role="tab" id="tabSlip" data-etab="slip" aria-selected="false" aria-controls="slipPane"><i data-icon="wallet" data-size="18"></i>薪資單</button>
     </div>
     <div id="punchPane" role="tabpanel" aria-labelledby="tabPunch">
     <div class="pills hidden" id="checkCard"></div>
@@ -76,6 +77,13 @@
       </div>
       <div class="section-title">我的申請<span class="muted" id="leaveHint"></span></div>
       <div class="leave-list" id="leaveList"></div>
+    </div>
+
+    <!-- 薪資單 -->
+    <div id="slipPane" class="hidden" role="tabpanel" aria-labelledby="tabSlip">
+      <div class="section-title">我的薪資單<span class="muted" id="slipHint"></span></div>
+      <div class="slip-list" id="slipList"></div>
+      <p class="help slip-note" id="slipNote"></p>
     </div>
   </section>
 </div>
