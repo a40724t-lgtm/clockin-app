@@ -30,7 +30,7 @@ function go(page) {
   document.querySelectorAll('.side a[data-page]').forEach((a) => { a.classList.toggle('active', a.dataset.page === page); a.toggleAttribute('aria-current', a.dataset.page === page); });
   document.querySelectorAll('[data-sec]').forEach((s) => s.classList.toggle('hidden', s.dataset.sec !== page));
   window.scrollTo({ top: 0 });
-  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, employees: renderEmployees, settings: loadSettings, audit: loadAudit })[page]();
+  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, employees: renderEmployees, settings: loadSettings, audit: loadAudit })[page]();
 }
 function handle(err) { if (err.status === 401) { toast('登入逾時，請重新登入', 'err'); setTimeout(() => location.reload(), 800); } else toast(err.message, 'err'); }
 
@@ -178,6 +178,7 @@ $('expCsv').onclick = () => { location.href = '/api/admin/export?format=csv&' + 
 
 // ---------- 對話框 ----------
 function modal(html, onSubmit, opts = {}) {
+  $('modal').classList.remove('wide');
   $('modal').innerHTML = `<div class="modal-head"><span class="m-ic ${opts.danger ? 'danger' : ''}">${icon(opts.icon || 'pencil', 20)}</span><h3 id="modalTitle">${opts.title || ''}</h3></div>${html}`;
   $('modal').setAttribute('aria-labelledby', 'modalTitle');
   $('modalBg').classList.remove('hidden');
@@ -190,7 +191,7 @@ function modal(html, onSubmit, opts = {}) {
   };
   const first = form.querySelector('input:not([type=hidden]),select'); if (first) first.focus();
 }
-function closeModal() { $('modalBg').classList.add('hidden'); }
+function closeModal() { $('modalBg').classList.add('hidden'); $('modal').classList.remove('wide'); }
 $('modalBg').onclick = (e) => { if (e.target === $('modalBg')) closeModal(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modalBg').classList.contains('hidden')) closeModal(); });
 const actions = (okText, danger) => `<div class="actions"><button type="button" class="btn secondary" data-cancel>取消</button><button class="btn ${danger ? 'danger' : ''}" type="submit">${okText}</button></div>`;
@@ -331,10 +332,10 @@ $('checksForm').onsubmit = async (e) => {
 
 // ---------- 修改紀錄 ----------
 const AUDIT_IC = { 新增員工: 'plus', 修改員工: 'user', 移除員工: 'trash', 補登打卡: 'plus', 修改打卡: 'pencil', 刪除打卡: 'trash', 修改設定: 'sliders', 修改打卡限制: 'shield', 變更密碼: 'key',
-  核准請假: 'calendarCheck', 退回請假: 'calendarX', 撤銷請假: 'undo', 取消請假: 'undo', 調整特休額度: 'palm', 新增假別: 'tag', 修改假別: 'tag' };
+  核准請假: 'calendarCheck', 修改薪資設定: 'banknote', 修改薪資規則: 'scale', 薪資調整: 'wallet', 確認薪資: 'lock', 解除薪資確認: 'unlock', 退回請假: 'calendarX', 撤銷請假: 'undo', 取消請假: 'undo', 調整特休額度: 'palm', 新增假別: 'tag', 修改假別: 'tag' };
 async function loadAudit() {
   try { const list = await api('/api/admin/audit');
-    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
+    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : /薪資/.test(a.action) ? 'b-info' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
       || emptyRow(3, '尚無修改紀錄', '管理員的變更會記錄在這裡', 'history');
   } catch (e) { handle(e); }
 }
@@ -590,5 +591,197 @@ function typeModal(t) {
   }, { title: isNew ? '新增假別' : '編輯假別', icon: 'tag' });
 }
 $('addType').onclick = () => typeModal(null);
+
+// =========================================================
+// 薪資統整
+// =========================================================
+let payMonth = null, payCur = null, curPtab = 'sum', paySet = null;
+const NT = (n) => Math.round(n || 0).toLocaleString('en-US');
+const ntd = (n) => `NT$ ${NT(n)}`;
+const hrs = (h) => (h ? `${+(+h).toFixed(2)} 小時` : '0');
+function defaultPayMonth() {
+  const t = taipeiToday();
+  if (Number(t.slice(8)) > 10) return t.slice(0, 7);
+  const [y, m] = t.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+}
+function shiftMonth(m, n) { const [y, mm] = m.split('-').map(Number); return new Date(Date.UTC(y, mm - 1 + n, 1)).toISOString().slice(0, 7); }
+function setPtab(t) {
+  curPtab = t;
+  document.querySelectorAll('[data-ptab]').forEach((b) => { const on = b.dataset.ptab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  document.querySelectorAll('[data-ppane]').forEach((p) => p.classList.toggle('hidden', p.dataset.ppane !== t));
+  $('payActions').classList.toggle('hidden', t !== 'sum');
+  (t === 'sum' ? loadPayroll : loadPaySettings)();
+}
+document.querySelectorAll('[data-ptab]').forEach((b) => b.onclick = () => setPtab(b.dataset.ptab));
+function loadPayrollPage() { if (!payMonth) payMonth = defaultPayMonth(); $('payMonth').value = payMonth; setPtab(curPtab); }
+$('payMonth').onchange = () => { if (/^\d{4}-\d{2}$/.test($('payMonth').value)) { payMonth = $('payMonth').value; loadPayroll(); } };
+$('payPrev').onclick = () => { payMonth = shiftMonth(payMonth, -1); $('payMonth').value = payMonth; loadPayroll(); };
+$('payNext').onclick = () => { payMonth = shiftMonth(payMonth, 1); $('payMonth').value = payMonth; loadPayroll(); };
+$('payExport').onclick = () => { location.href = `/api/admin/payroll/${payMonth}/export`; toast('正在下載 Excel…'); };
+$('payPrintAll').onclick = () => window.open(`/admin/payslip?month=${payMonth}`, '_blank');
+
+function leaveCell(e) {
+  if (!e.leaves.length) return '<span class="muted">—</span>';
+  return `<div class="pay-leaves">${e.leaves.map((l) => `<span class="pl ${l.effect < 0 ? 'neg' : l.effect > 0 ? 'pos' : ''}"><b>${esc(l.type_name)}</b> ${+l.hours} 小時・${esc(l.ratio_text)}<em>${esc(l.effect_text)}</em></span>`).join('')}</div>`;
+}
+async function loadPayroll() {
+  const month = payMonth;
+  try {
+    const p = await api('/api/admin/payroll?month=' + month);
+    if (month !== payMonth) return;
+    payCur = p;
+    const [y, m] = month.split('-').map(Number);
+    $('payStatus').innerHTML = (p.confirmed ? `<span class="badge b-success">${icon('lock')}已確認・${esc(p.confirmed_text)}</span>` : `<span class="badge b-warning">${icon('hourglass')}試算中・未確認</span>`)
+      + (p.in_progress && !p.confirmed ? `<span class="badge b-neutral">${icon('info')}本月尚未結束</span>` : '');
+    $('payGen').textContent = p.confirmed ? `${y} 年 ${m} 月・確認時的試算結果` : `${y} 年 ${m} 月・${p.from.slice(5).replace('-', '/')}～${p.to.slice(5).replace('-', '/')}`;
+    $('payConfirm').innerHTML = p.confirmed ? `${icon('unlock', 18)}解除確認` : `${icon('lock', 18)}確認 ${m} 月薪資`;
+    $('payConfirm').className = p.confirmed ? 'btn secondary' : 'btn';
+    $('pNet').textContent = NT(p.totals.net); $('pGross').textContent = NT(p.totals.gross);
+    $('pOT').textContent = NT(p.totals.ot_pay); $('pOTl').textContent = `加班費・${+p.totals.ot_hours} 小時`;
+    $('pLeave').textContent = NT(p.totals.leave_deduct); $('pLeavel').textContent = `請假扣薪・請假 ${+p.totals.leave_hours} 小時`;
+    $('payBody').innerHTML = p.employees.map((e) => `<tr>
+      <td class="wrap pay-who"><span class="who">${avatar(e.name, 'sm')}<span>${esc(e.name)} ${e.is_sample ? B.sample() : ''}<span class="sub" style="font-weight:400"><span class="badge ${e.pay_type === 'hourly' ? 'b-info' : 'b-brand'}">${e.pay_type_text}</span> ${ntd(e.pay_amount)}${e.pay_type === 'monthly' ? `・時薪 ${e.hourly_rate}` : ''}</span>${e.warnings.length ? `<span class="sub" style="color:var(--warning);font-weight:500">${icon('alert', 13)} ${esc(e.warnings[0])}</span>` : ''}</span></span></td>
+      <td class="num"><b>${e.work_days}</b> 天・${+e.worked_hours} 小時<span class="sub">計薪 ${+e.paid_hours} 小時${e.weekend_days ? `・休息日 ${e.weekend_days} 天` : ''}</span></td>
+      <td class="num">${e.ot.total ? `<b>${+e.ot.total}</b> 小時<span class="sub">平日 ${+e.ot.wd1}＋${+e.ot.wd2}${e.ot.rest_total ? `・休息日 ${+e.ot.rest_total}` : ''}</span><span class="sub">${ntd(e.ot.pay)}</span>` : '<span class="muted">—</span>'}</td>
+      <td><span class="badges pay-st">${e.late_count ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${e.late_count} 次 ${e.late_min} 分</span>` : ''}${e.early_count ? `<span class="badge b-warning">${icon('logout')}早退 ${e.early_count} 次 ${e.early_min} 分</span>` : ''}${e.offsite_count ? B.offsite(e.offsite_count) : ''}${e.wfh_days ? `<span class="badge b-wfh">${icon('home')}居家 ${e.wfh_days} 天</span>` : ''}${e.trip_days ? `<span class="badge b-trip">${icon('briefcase')}公差 ${e.trip_days} 天</span>` : ''}${!e.late_count && !e.early_count && !e.offsite_count && !e.wfh_days && !e.trip_days ? B.normal() : ''}</span>${e.late_deduct ? `<span class="sub" style="color:var(--danger)">遲到／早退扣 ${ntd(e.late_deduct)}</span>` : ''}</td>
+      <td class="wrap">${leaveCell(e)}</td>
+      <td class="num r">${NT(e.gross)}</td><td class="num r neg">${e.deduct_total ? '−' + NT(e.deduct_total) : '0'}</td>
+      <td class="num r"><b class="pay-net">${NT(e.net)}</b></td>
+      <td><div class="cell-actions"><button class="btn secondary sm" data-pdetail="${e.id}">${icon('list', 15)}明細</button><a class="btn ghost sm icon-only" href="/admin/payslip?month=${month}&employee_id=${e.id}" target="_blank" rel="noopener" title="薪資單" aria-label="${esc(e.name)} 的薪資單">${icon('printer', 16)}</a></div></td></tr>`).join('')
+      || emptyRow(9, '這個月份沒有薪資資料', '沒有出勤紀錄，或員工在此月份之後才建立', 'wallet');
+    $('payBody').querySelectorAll('[data-pdetail]').forEach((b) => b.onclick = () => payDetail(p.employees.find((x) => x.id == b.dataset.pdetail)));
+  } catch (e) { handle(e); }
+}
+function payLines(lines, sign) {
+  return lines.map((l) => `<tr><td>${esc(l.label)}${l.adj_id && !payCur.confirmed ? ` <button type="button" class="btn danger-ghost sm icon-only" data-deladj="${l.adj_id}" title="刪除" aria-label="刪除調整項 ${esc(l.label)}">${icon('trash', 14)}</button>` : ''}<span class="sub">${esc(l.detail)}</span></td><td class="num r ${sign < 0 ? 'neg' : ''}">${sign < 0 ? '−' : ''}${NT(l.amount)}</td></tr>`).join('')
+    || `<tr><td colspan="2" class="muted">無</td></tr>`;
+}
+function payDetail(e) {
+  const locked = payCur.confirmed;
+  modal(`<form class="form-grid">
+    <div class="summary-box pay-sum"><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} <span class="badge ${e.pay_type === 'hourly' ? 'b-info' : 'b-brand'}">${e.pay_type_text} ${ntd(e.pay_amount)}</span></span>
+      <div class="muted" style="margin-top:6px">${esc(payCur.month)}・出勤 ${e.work_days} 天・工時 ${+e.worked_hours} 小時（計薪 ${+e.paid_hours}）・加班 ${+e.ot.total} 小時${e.late_count ? `・遲到 ${e.late_count} 次 ${e.late_min} 分` : ''}${e.early_count ? `・早退 ${e.early_count} 次 ${e.early_min} 分` : ''}</div>
+      ${e.warnings.map((w) => `<div style="color:var(--warning);margin-top:4px">${icon('alert', 14)} ${esc(w)}</div>`).join('')}</div>
+    <div class="pay-cols">
+      <div><div class="label">應發項目</div><table class="pay-lines"><tbody>${payLines(e.earn, 1)}</tbody><tfoot><tr><td>應發合計</td><td class="num r">${NT(e.gross)}</td></tr></tfoot></table></div>
+      <div><div class="label">應扣項目</div><table class="pay-lines"><tbody>${payLines(e.deduct, -1)}</tbody><tfoot><tr><td>應扣合計</td><td class="num r neg">−${NT(e.deduct_total)}</td></tr></tfoot></table></div>
+    </div>
+    <div class="pay-netline"><span>實發金額</span><b>${ntd(e.net)}</b></div>
+    ${e.leaves.length ? `<div><div class="label">請假</div>${leaveCell(e)}${e.leaves.filter((l) => l.cap_note).map((l) => `<p class="help" style="margin:4px 0 0">${esc(l.type_name)}：${esc(l.cap_note)}${l.over_cap_hours ? `，超過上限 ${l.over_cap_hours} 小時不給薪` : ''}</p>`).join('')}</div>` : ''}
+    ${locked ? `<div class="alert info">${icon('lock', 18)}<div>此月份已確認鎖定，若要調整請先「解除確認」。</div></div>` : `
+    <fieldset class="pay-adj"><legend>新增獎金／其他加扣項</legend>
+      <div class="row2"><div><label for="adjKind">類型</label><select id="adjKind" name="kind"><option value="add">加項（獎金等）</option><option value="deduct">扣項</option></select></div>
+        <div><label for="adjAmt">金額（NT$）</label><input type="number" id="adjAmt" name="amount" min="1" step="1" required inputmode="numeric"></div></div>
+      <div class="row2"><div><label for="adjLabel">項目名稱</label><input type="text" id="adjLabel" name="label" maxlength="20" required placeholder="例如：全勤獎金、借支"></div>
+        <div><label for="adjNote">備註（選填）</label><input type="text" id="adjNote" name="note" maxlength="200" placeholder="例如：10 月業績達標"></div></div>
+    </fieldset>`}
+    <p class="help" style="margin:0">${icon('info', 14)} 試算僅供參考，請以會計／勞動法規為準。</p>
+    <div class="actions"><a class="btn ghost" href="/admin/payslip?month=${payCur.month}&employee_id=${e.id}" target="_blank" rel="noopener">${icon('printer', 16)}薪資單</a><span style="flex:1"></span><button type="button" class="btn secondary" data-cancel>關閉</button>${locked ? '<button type="submit" class="btn hidden">關閉</button>' : `<button type="submit" class="btn">${icon('plus', 16)}加入調整項</button>`}</div>
+  </form>`,
+  async (f) => {
+    if (locked) return;
+    await api(`/api/admin/payroll/${payCur.month}/adjustments`, { method: 'POST', body: { ...formData(f), employee_id: e.id } });
+    toast('已加入調整項', 'ok'); await loadPayroll(); reopenDetail(e.id);
+  }, { title: `${e.name}・薪資明細`, icon: 'wallet' });
+  $('modal').classList.add('wide'); if (document.activeElement) document.activeElement.blur(); $('modal').scrollTop = 0;
+  $('modal').querySelectorAll('[data-deladj]').forEach((b) => b.onclick = async () => {
+    try { await api(`/api/admin/payroll/${payCur.month}/adjustments/${b.dataset.deladj}`, { method: 'DELETE' }); toast('已刪除調整項', 'ok'); await loadPayroll(); reopenDetail(e.id); } catch (err) { handle(err); }
+  });
+}
+function reopenDetail(id) { const x = payCur && payCur.employees.find((y) => y.id === id); if (x) setTimeout(() => payDetail(x), 0); }
+$('payConfirm').onclick = () => {
+  if (!payCur) return;
+  const [, m] = payCur.month.split('-').map(Number);
+  if (payCur.confirmed) {
+    modal(`<form class="form-grid"><p style="margin:0">解除確認後，${m} 月薪資會依最新的打卡、請假與薪資設定重新試算。</p>
+      <div><label for="ucReason">解除原因（必填，會記錄在修改紀錄）</label><input type="text" id="ucReason" name="reason" required maxlength="200" placeholder="例如：補登 10/15 打卡後需重算"></div>${actions('解除確認', true)}</form>`,
+    async (f) => { await api(`/api/admin/payroll/${payCur.month}/unconfirm`, { method: 'POST', body: formData(f) }); toast(`已解除 ${m} 月確認`, 'ok'); loadPayroll(); }, { title: '解除薪資確認', icon: 'unlock', danger: true });
+  } else {
+    modal(`<form class="form-grid"><div class="summary-box">${payCur.month}・${payCur.employees.length} 人・實發合計 <b>${ntd(payCur.totals.net)}</b></div>
+      <p style="margin:0">確認後此月份會鎖定，保留目前的試算結果；之後修改打卡、請假或薪資設定都不會改變已確認的金額（需要時可解除確認）。</p>
+      ${payCur.in_progress ? `<div class="alert warn">${icon('alert', 18)}<div>本月尚未結束，確認後後續的打卡不會計入。</div></div>` : ''}
+      <p class="help" style="margin:0">試算僅供參考，請以會計／勞動法規為準。</p>${actions('確認並鎖定')}</form>`,
+    async () => { await api(`/api/admin/payroll/${payCur.month}/confirm`, { method: 'POST' }); toast(`${m} 月薪資已確認`, 'ok'); loadPayroll(); }, { title: `確認 ${m} 月薪資`, icon: 'lock' });
+  }
+};
+
+// 薪資設定
+async function loadPaySettings() {
+  try {
+    const r = await api('/api/admin/payroll/settings'); paySet = r;
+    const itemsOf = (e, k) => e.pay_items.filter((i) => i.kind === k).map((i) => `<span class="sub" style="margin:0">${esc(i.name)} ${NT(i.amount)}</span>`).join('') || '<span class="muted">—</span>';
+    $('paySetBody').innerHTML = r.employees.map((e) => {
+      const low = e.pay_amount && (e.pay_type === 'monthly' ? e.pay_amount < r.min_wage.monthly : e.pay_amount < r.min_wage.hourly);
+      return `<tr><td><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></td>
+      <td><span class="badge ${e.pay_type === 'hourly' ? 'b-info' : 'b-brand'}">${e.pay_type === 'hourly' ? '時薪' : '月薪'}</span></td>
+      <td class="num r">${e.pay_amount ? `<b>${ntd(e.pay_amount)}</b>${e.pay_type === 'monthly' ? `<span class="sub">時薪 ${(e.pay_amount / 240).toFixed(2)}</span>` : '<span class="sub">每小時</span>'}` : '<span class="badge b-warning">尚未設定</span>'}${low ? `<span class="sub" style="color:var(--danger)">低於基本工資</span>` : ''}</td>
+      <td>${itemsOf(e, 'allow')}</td><td>${itemsOf(e, 'deduct')}</td>
+      <td class="wrap muted">${esc(e.pay_note) || '—'}</td>
+      <td><div class="cell-actions"><button class="btn secondary sm" data-payedit="${e.id}">${icon('pencil', 15)}編輯</button></div></td></tr>`;
+    }).join('') || emptyRow(7, '尚無員工', '請先到「員工管理」新增員工', 'users');
+    $('paySetBody').querySelectorAll('[data-payedit]').forEach((b) => b.onclick = () => payEmpModal(r.employees.find((e) => e.id == b.dataset.payedit)));
+    $('prLate').checked = r.rules.late_deduct; $('prClip').checked = r.rules.clip_early; $('prUnit').value = String(r.rules.ot_unit);
+    try { const me = await api('/api/admin/me'); $('prStart').textContent = me.settings.work_start; } catch (e) {}
+    const opt = (v) => ({ 1: '照給（100%）', 0.5: '半薪（50%）', 0: '不給薪（0%）' }[v] || `${Math.round(v * 100)}%`);
+    $('prTypes').innerHTML = r.leave_types.map((t) => {
+      const preset = [1, 0.5, 0].includes(+t.pay_ratio);
+      return `<tr data-tid="${t.id}"><td><b>${esc(t.name)}</b>${t.active ? '' : ' <span class="badge b-neutral">停用</span>'}</td>
+      <td><div class="inline-actions" style="flex-wrap:nowrap"><select class="pr-ratio" aria-label="${esc(t.name)} 給薪比例" style="width:auto;min-width:140px"><option value="1">照給（100%）</option><option value="0.5">半薪（50%）</option><option value="0">不給薪（0%）</option><option value="custom">自訂…</option></select>
+        <input type="number" class="pr-custom ${preset ? 'hidden' : ''}" min="0" max="100" step="1" value="${Math.round(t.pay_ratio * 100)}" aria-label="${esc(t.name)} 自訂給薪百分比" style="width:84px"><span class="pr-pct ${preset ? 'hidden' : ''}">%</span></div></td>
+      <td><input type="number" class="pr-cap" min="0" max="366" step="0.5" value="${t.pay_cap_days ?? ''}" placeholder="無上限" aria-label="${esc(t.name)} 每年給薪上限天數" style="width:110px"></td>
+      <td class="muted">${opt(t.default_ratio)}${t.default_cap ? `・每年 ${t.default_cap} 天` : ''}</td></tr>`;
+    }).join('');
+    $('prTypes').querySelectorAll('tr').forEach((tr) => {
+      const t = r.leave_types.find((x) => x.id == tr.dataset.tid);
+      const sel = tr.querySelector('.pr-ratio');
+      sel.value = [1, 0.5, 0].includes(+t.pay_ratio) ? String(+t.pay_ratio) : 'custom';
+      sel.onchange = () => { const c = sel.value === 'custom'; tr.querySelector('.pr-custom').classList.toggle('hidden', !c); tr.querySelector('.pr-pct').classList.toggle('hidden', !c); };
+    });
+  } catch (e) { handle(e); }
+}
+$('payRulesForm').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const leave_types = [...$('prTypes').querySelectorAll('tr')].map((tr) => {
+    const sel = tr.querySelector('.pr-ratio').value;
+    return { id: Number(tr.dataset.tid), pay_ratio: sel === 'custom' ? Number(tr.querySelector('.pr-custom').value || 0) / 100 : Number(sel), pay_cap_days: tr.querySelector('.pr-cap').value };
+  });
+  try { await api('/api/admin/payroll/rules', { method: 'PUT', body: { late_deduct: $('prLate').checked, clip_early: $('prClip').checked, ot_unit: Number($('prUnit').value), leave_types } }); toast('計算規則已儲存', 'ok'); loadPaySettings(); } catch (err) { handle(err); }
+};
+function payItemRow(it = { kind: 'allow', name: '', amount: '' }) {
+  return `<div class="pay-item"><select class="pi-kind" aria-label="類型"><option value="allow" ${it.kind !== 'deduct' ? 'selected' : ''}>津貼（加）</option><option value="deduct" ${it.kind === 'deduct' ? 'selected' : ''}>扣項（減）</option></select>
+    <input type="text" class="pi-name" maxlength="20" value="${esc(it.name)}" placeholder="例如：伙食津貼、勞保自付額" aria-label="名稱">
+    <input type="number" class="pi-amt" min="0" step="1" value="${esc(it.amount)}" placeholder="金額" aria-label="金額" inputmode="numeric">
+    <button type="button" class="btn danger-ghost sm icon-only" data-pirm title="移除" aria-label="移除這一項">${icon('trash', 15)}</button></div>`;
+}
+function payEmpModal(e) {
+  modal(`<form class="form-grid">
+    <div class="summary-box"><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></div>
+    <div><div class="label">計薪方式</div><div class="opt-grid" style="grid-template-columns:1fr 1fr" role="radiogroup" aria-label="計薪方式">
+      <label class="opt"><input type="radio" name="pay_type" value="monthly" ${e.pay_type !== 'hourly' ? 'checked' : ''}><span>月薪<small>固定月薪，請假依假別扣薪</small></span></label>
+      <label class="opt"><input type="radio" name="pay_type" value="hourly" ${e.pay_type === 'hourly' ? 'checked' : ''}><span>時薪<small>依實際工時計薪</small></span></label></div></div>
+    <div><label for="peAmt" id="peAmtL">金額</label><input type="number" id="peAmt" name="pay_amount" min="0" step="1" value="${e.pay_amount || ''}" required inputmode="numeric"><p class="help" id="peHint"></p></div>
+    <div><div class="label">固定津貼／固定扣項（每月）</div><div id="peItems" class="pay-items">${e.pay_items.map(payItemRow).join('')}</div>
+      <button type="button" class="btn soft sm" id="peAdd" style="margin-top:8px">${icon('plus', 15)}新增一項</button>
+      <p class="help">勞保、健保自付額請依投保級距手動填寫（系統不自動計算）。</p></div>
+    <div><label for="peNote">備註（選填）</label><input type="text" id="peNote" name="pay_note" maxlength="100" value="${esc(e.pay_note)}"></div>
+    ${actions('儲存')}</form>`,
+  async (f) => {
+    const items = [...$('peItems').querySelectorAll('.pay-item')].map((r) => ({ kind: r.querySelector('.pi-kind').value, name: r.querySelector('.pi-name').value, amount: r.querySelector('.pi-amt').value }));
+    await api('/api/admin/payroll/employees/' + e.id, { method: 'PUT', body: { pay_type: f.querySelector('[name=pay_type]:checked').value, pay_amount: $('peAmt').value, pay_note: $('peNote').value, pay_items: items } });
+    toast(`已更新 ${e.name} 的薪資設定`, 'ok'); loadPaySettings();
+  }, { title: '薪資設定', icon: 'banknote' });
+  const mw = paySet.min_wage;
+  const sync = () => {
+    const h = $('modal').querySelector('[name=pay_type]:checked').value === 'hourly';
+    $('peAmtL').textContent = h ? '時薪（NT$／小時）' : '月薪（NT$）';
+    const v = Number($('peAmt').value || 0);
+    $('peHint').innerHTML = (h ? `${mw.year} 年基本工資時薪 NT$ ${mw.hourly}` : `換算時薪 ${v ? (v / 240).toFixed(2) : '—'}（月薪 ÷ 30 ÷ 8）・${mw.year} 年基本工資月薪 NT$ ${NT(mw.monthly)}`)
+      + (v && v < (h ? mw.hourly : mw.monthly) ? '　<b style="color:var(--danger)">低於基本工資</b>' : '');
+  };
+  $('modal').querySelectorAll('[name=pay_type]').forEach((x) => x.onchange = sync); $('peAmt').oninput = sync; sync();
+  const bindRm = () => $('peItems').querySelectorAll('[data-pirm]').forEach((b) => b.onclick = () => b.closest('.pay-item').remove());
+  $('peAdd').onclick = () => { $('peItems').insertAdjacentHTML('beforeend', payItemRow()); bindRm(); $('peItems').lastElementChild.querySelector('.pi-name').focus(); };
+  bindRm();
+}
 
 init();

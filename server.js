@@ -6,7 +6,7 @@ const ExcelJS = require('exceljs');
 const checks = require('./checks');
 const L = require('./leave');
 const fs = require('fs');
-const { DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET } = require('./db');
+const { defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET } = require('./db');
 
 const app = express();
 
@@ -1044,7 +1044,8 @@ function validateType(b, id) {
 app.post('/api/admin/leave-types', (req, res) => {
   const b = req.body || {}; const err = validateType(b); if (err) return res.status(400).json({ error: err });
   const sort = (db.prepare('SELECT MAX(sort) m FROM leave_types').get().m || 0) + 1;
-  db.prepare('INSERT INTO leave_types(name,deduct_annual,needs_attachment,active,sort) VALUES(?,?,?,1,?)').run(b.name.trim(), b.deduct_annual ? 1 : 0, b.needs_attachment ? 1 : 0, sort);
+  const [payRatio, payCap] = defaultPay(b.name.trim());
+  db.prepare('INSERT INTO leave_types(name,deduct_annual,needs_attachment,active,sort,pay_ratio,pay_cap_days) VALUES(?,?,?,1,?,?,?)').run(b.name.trim(), b.deduct_annual ? 1 : 0, b.needs_attachment ? 1 : 0, sort, payRatio, payCap);
   audit('新增假別', `新增假別「${b.name.trim()}」${b.deduct_annual ? '（扣特休）' : ''}`);
   res.json({ ok: true });
 });
@@ -1085,6 +1086,9 @@ app.put('/api/admin/leave-balances/:id', (req, res) => {
   audit('調整特休額度', `${emp.name}：${before.year} 年特休額度 ${before.quota_hours} → ${after.quota_hours} 小時（已用 ${after.used_hours}、剩餘 ${after.remaining_hours}）${hire !== (emp.hire_date || '') ? `｜到職日 ${emp.hire_date || '未填'} → ${hire || '未填'}` : ''}`);
   res.json({ ok: true, balance: after });
 });
+
+// 薪資統整（試算）
+require('./payroll')({ app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay });
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 

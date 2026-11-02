@@ -729,3 +729,44 @@ tr.row-offsite td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 .out-rule { display: grid; gap: 10px; }
 .out-rule .opt-grid { grid-template-columns: 1fr 1fr; }
 .out-rule .opt span { min-height: 56px; }
+
+/* 薪資統整 */
+.pay-disclaimer { margin-bottom: 14px; }
+.pay-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; }
+.pay-bar input[type=month] { width: auto; min-width: 170px; font-weight: 600; }
+th.r, td.r { text-align: right; }
+td.neg, .neg { color: var(--danger); }
+.pay-net { font-size: 16px; color: var(--success); }
+.pay-table td.wrap { min-width: 190px; }
+.pay-leaves { display: grid; gap: 4px; }
+.pay-leaves .pl { display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: baseline; font-size: var(--fs-sm); line-height: 1.4; }
+.pay-leaves .pl em { font-style: normal; font-size: var(--fs-xs); color: var(--muted); }
+.pay-leaves .pl.neg em { color: var(--danger); font-weight: 600; }
+.pay-leaves .pl.pos em { color: var(--success); font-weight: 600; }
+.modal.wide { max-width: 780px; max-height: calc(100vh - 32px); overflow: auto; }
+.pay-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .pay-cols { grid-template-columns: 1fr; } }
+table.pay-lines { font-size: 14px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+table.pay-lines td { padding: 8px 12px; white-space: normal; vertical-align: top; }
+table.pay-lines td .btn { min-height: 26px; width: 26px; vertical-align: middle; }
+table.pay-lines tfoot td { font-weight: 700; background: var(--surface-2); border-top: 1px solid var(--line); }
+.pay-netline { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-radius: var(--r); background: var(--success-bg); color: var(--success); border: 1px solid var(--success-line); font-weight: 600; }
+.pay-netline b { font-size: 24px; letter-spacing: .01em; }
+.pay-adj { border: 1px dashed var(--line-strong); border-radius: var(--r); padding: 12px 14px 14px; margin: 0; display: grid; gap: 10px; }
+.pay-adj legend { padding: 0 6px; font-weight: 600; font-size: var(--fs-sm); color: var(--text-2); }
+.pay-items { display: grid; gap: 8px; }
+.pay-item { display: grid; grid-template-columns: 130px 1fr 110px auto; gap: 8px; align-items: center; }
+@media (max-width: 560px) { .pay-item { grid-template-columns: 1fr 1fr; } }
+.pay-table th, .pay-table td { padding-left: 12px; padding-right: 12px; }
+.pay-table .pay-st { max-width: 230px; flex-wrap: wrap; }
+.pay-table td.wrap { min-width: 180px; max-width: 240px; }
+.pay-table td.pay-who { min-width: 220px; max-width: 260px; }
+.pay-table td.pay-who .sub .badge { padding: 2px 7px; }
+.pay-table td.pay-who { min-width: 200px; max-width: 210px; }
+.pay-table td:nth-child(2) { white-space: normal; min-width: 118px; max-width: 140px; }
+.pay-table td:nth-child(3) { white-space: normal; min-width: 120px; max-width: 150px; }
+.pay-table td.wrap { min-width: 160px; max-width: 200px; }
+.pay-table .pay-st { max-width: 180px; }
+.pay-table td.wrap.pay-who { min-width: 236px; max-width: 250px; }
+.pay-table td.wrap:not(.pay-who) { min-width: 150px; max-width: 180px; }
+.pay-table th, .pay-table td { padding-left: 10px; padding-right: 10px; }

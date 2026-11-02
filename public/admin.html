@@ -38,6 +38,7 @@
     <a data-page="overview" class="active"><i data-icon="dashboard"></i>今日總覽</a>
     <a data-page="records"><i data-icon="list"></i>打卡紀錄</a>
     <a data-page="leave"><i data-icon="palm"></i>請假<span class="nav-count" id="navLeaveCount" aria-label="待審核請假"></span></a>
+    <a data-page="payroll"><i data-icon="wallet"></i>薪資統整</a>
     <a data-page="employees"><i data-icon="users"></i>員工管理</a>
     <a data-page="settings"><i data-icon="sliders"></i>設定</a>
     <a data-page="audit"><i data-icon="history"></i>修改紀錄</a>
@@ -175,6 +176,62 @@
             <button class="btn sm" id="addType"><i data-icon="plus" data-size="16"></i>新增假別</button></div>
           <div class="table-wrap"><table><thead><tr><th>假別</th><th>扣特休額度</th><th>建議附證明</th><th>狀態</th><th></th></tr></thead><tbody id="typeBody"></tbody></table></div>
         </div>
+      </div>
+    </section>
+
+    <!-- 薪資統整 -->
+    <section data-sec="payroll" class="hidden">
+      <div class="page-head"><div><h1>薪資統整</h1><p>依打卡、請假、加班自動試算每月薪資，可手動調整並確認鎖定</p></div>
+        <div class="inline-actions" id="payActions">
+          <button class="btn secondary" id="payExport"><i data-icon="sheet" data-size="18"></i>匯出 Excel</button>
+          <button class="btn secondary" id="payPrintAll"><i data-icon="printer" data-size="18"></i>列印薪資單</button>
+          <button class="btn" id="payConfirm"><i data-icon="lock" data-size="18"></i>確認本月</button>
+        </div></div>
+      <div class="alert warn pay-disclaimer"><i data-icon="alert" data-size="18"></i><div><b>試算僅供參考，請以會計／勞動法規為準。</b>月薪換算時薪＝月薪 ÷ 30 ÷ 8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；目前沒有國定假日行事曆，週六、日上班一律視為「休息日加班」（前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67）。勞健保自付額請手動填寫。</div></div>
+      <div class="tabs" role="tablist" aria-label="薪資分頁">
+        <button class="on" data-ptab="sum" role="tab"><i data-icon="wallet" data-size="16"></i>月份統整</button>
+        <button data-ptab="set" role="tab"><i data-icon="sliders" data-size="16"></i>薪資設定</button>
+      </div>
+      <div data-ppane="sum">
+        <div class="card pay-bar">
+          <button class="btn secondary sm icon-only" id="payPrev" aria-label="上個月"><i data-icon="chevronLeft" data-size="18"></i></button>
+          <div><label for="payMonth" class="sr-only">月份</label><input type="month" id="payMonth"></div>
+          <button class="btn secondary sm icon-only" id="payNext" aria-label="下個月"><i data-icon="chevronRight" data-size="18"></i></button>
+          <span id="payStatus" class="badges"></span>
+          <span style="flex:1"></span>
+          <span class="help" style="margin:0" id="payGen"></span>
+        </div>
+        <div class="stats compact" style="margin-top:16px">
+          <div class="card stat tone-success"><span class="s-ic"><i data-icon="wallet"></i></span><div class="n" id="pNet">0</div><div class="l">實發合計（NT$）</div></div>
+          <div class="card stat tone-brand"><span class="s-ic"><i data-icon="banknote"></i></span><div class="n" id="pGross">0</div><div class="l">應發合計（NT$）</div></div>
+          <div class="card stat tone-info"><span class="s-ic"><i data-icon="trend"></i></span><div class="n" id="pOT">0</div><div class="l" id="pOTl">加班費（NT$）</div></div>
+          <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="pLeave">0</div><div class="l" id="pLeavel">請假扣薪（NT$）</div></div>
+        </div>
+        <div class="card table-card"><div class="table-wrap"><table class="pay-table"><thead><tr><th>員工／計薪</th><th>出勤／工時</th><th>加班</th><th>出勤狀況</th><th>請假與薪資影響</th><th class="r">應發</th><th class="r">應扣</th><th class="r">實發</th><th></th></tr></thead><tbody id="payBody"></tbody></table></div></div>
+        <p class="help" style="margin-top:12px">點「明細」可查看每一筆計算、加入獎金或其他加扣項；確認後該月份會鎖定（保留確認當下的試算結果），之後修改打卡或請假不會影響已確認的月份。</p>
+      </div>
+      <div data-ppane="set" class="hidden">
+        <div class="card set-section" style="margin-bottom:18px">
+          <div class="set-head"><span class="s-ic"><i data-icon="banknote"></i></span><div><h3>員工薪資</h3><p>每位員工的計薪方式、金額、固定津貼與固定扣項（勞保／健保自付額請依投保級距手動填寫，系統不自動計算）。</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>員工</th><th>計薪方式</th><th class="r">金額</th><th>固定津貼</th><th>固定扣項</th><th>備註</th><th></th></tr></thead><tbody id="paySetBody"></tbody></table></div>
+        </div>
+        <form class="card set-section" id="payRulesForm">
+          <div class="set-head"><span class="s-ic"><i data-icon="scale"></i></span><div><h3>計算規則</h3><p>依勞動基準法、勞工請假規則與性別平等工作法的預設值，可依公司規章調整。</p></div></div>
+          <div class="set-body form-grid">
+            <label class="switch-row" for="prLate"><input type="checkbox" class="switch" id="prLate"><span><span class="t">遲到／早退依分鐘比例扣薪（月薪制）</span><br><span class="d">預設關閉。開啟後只按實際分鐘 × 時薪比例扣除，不做懲罰性罰款；時薪制本來就依實際工時計薪，不另扣。</span></span></label>
+            <label class="switch-row" for="prClip"><input type="checkbox" class="switch" id="prClip"><span><span class="t">提早到班不計入工時</span><br><span class="d">平日上班時間（<span id="prStart">09:00</span>）以前打卡的時間不算工時、不算加班</span></span></label>
+            <div class="row2">
+              <div><label for="prUnit">加班計算單位（每天，不足一單位不計）</label><select id="prUnit"><option value="1">1 分鐘（依實際分鐘）</option><option value="15">15 分鐘</option><option value="30">30 分鐘</option><option value="60">60 分鐘</option></select></div>
+              <div class="help" style="align-self:end;margin:0 0 10px">加班以打卡計算（超過標準工時即算），若公司採加班申請制，請自行核對。</div>
+            </div>
+            <div>
+              <div class="label">假別給薪比例</div>
+              <div class="table-wrap" style="border:1px solid var(--line);border-radius:var(--r)"><table><thead><tr><th>假別</th><th>給薪比例</th><th>每年給薪上限（天）</th><th>法規預設</th></tr></thead><tbody id="prTypes"></tbody></table></div>
+              <p class="help">病假（普通傷病，未住院）一年 30 天內半薪，超過部分不給薪；事假、家庭照顧假不給薪；生理假減半發給；特休、婚假、喪假、公假、產檢假等照給。</p>
+            </div>
+          </div>
+          <div class="set-foot"><button class="btn" type="submit"><i data-icon="check" data-size="18"></i>儲存計算規則</button></div>
+        </form>
       </div>
     </section>
 
