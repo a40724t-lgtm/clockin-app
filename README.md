@@ -76,8 +76,11 @@
 - 在 Render、Railway 上會自動偵測，預設信任 **1 層**代理。
 - 在自己電腦上預設只信任本機（127.0.0.1）的代理，外部連線帶來的 `X-Forwarded-For` 不會被採信。
 - 可用環境變數 `TRUST_PROXY` 調整（數字代表代理層數，例如 `1`、`2`）。
+- **經過 Cloudflare 時**（例如 SnapDeploy），代理層看到的是 Cloudflare 節點的 IP（如 `172.64.x.x`～`172.71.x.x`）。系統預設（`CLIENT_IP_HEADER=auto`）會在確認連線來自 Cloudflare 時，依序改讀 `CF-Connecting-IP` → `True-Client-IP` → `X-Forwarded-For` 最左邊的公開 IP；不是來自 Cloudflare 的連線則不採信這些標頭，避免有人偽造標頭繞過 WiFi 檢查。
+- 也可用 `CLIENT_IP_HEADER` 強制指定：`none`（只用代理層數算出的 IP）、`x-forwarded-for`，或任何標頭名稱（例如 `x-real-ip`）。
+- 打卡 WiFi 檢查、後台「使用目前連線的 IP」按鈕與登入錯誤鎖定都使用同一個判斷。
 
-**部署後請檢查一次：** 用公司 WiFi 打開後台「設定」，看「您目前的 IP」是否和 https://ifconfig.me 顯示的一樣。若不一樣（例如顯示的是代理伺服器的 IP），請調整 `TRUST_PROXY` 後重新部署。
+**部署後請檢查一次：** 用公司 WiFi 開啟 `https://你的網址/api/public/whoami`（或後台「設定」的「您目前的 IP」），確認 `ip` 和 https://ifconfig.me 顯示的一樣；`source` 會說明是從哪個標頭取得。若不一樣，請調整 `TRUST_PROXY` 或 `CLIENT_IP_HEADER` 後重新部署。
 
 ### 5. 限制（請務必了解）
 
@@ -158,6 +161,7 @@ npm start
 | `ADMIN_PASSWORD` | 第一次建立資料庫時的管理員密碼 | admin1234 |
 | `NO_SAMPLE` | 設為 `1` 則不建立示範資料 | — |
 | `TRUST_PROXY` | 反向代理層數或信任的 IP（決定如何讀取 `X-Forwarded-For`） | Render／Railway 上為 `1`，其他為 `loopback` |
+| `CLIENT_IP_HEADER` | 從哪裡取得員工真實 IP：`auto`、`none`、`x-forwarded-for` 或標頭名稱 | `auto` |
 
 ## 部署到網路上（讓員工在外面也能打卡）
 

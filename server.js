@@ -27,7 +27,18 @@ function trustProxySetting() {
   return 'loopback';
 }
 app.set('trust proxy', trustProxySetting());
-const clientIp = (req) => checks.normalizeIp(req.ip || req.socket.remoteAddress);
+// 員工真實 IP：打卡 WiFi 檢查、「使用目前連線的 IP」按鈕、登入錯誤鎖定都用同一個函式
+// CLIENT_IP_HEADER：auto（預設）/ none / x-forwarded-for / 指定標頭名稱，詳見 checks.js
+const CLIENT_IP_MODE = (process.env.CLIENT_IP_HEADER || 'auto').trim().toLowerCase();
+const clientIpInfo = (req) => checks.resolveClientIp(req.headers, req.ip || req.socket.remoteAddress, CLIENT_IP_MODE);
+const clientIp = (req) => clientIpInfo(req).ip;
+const IP_DEBUG_HEADERS = ['cf-connecting-ip', 'true-client-ip', 'x-forwarded-for', 'x-real-ip', 'cf-ipcountry', 'x-forwarded-proto'];
+function ipDebug(req) {
+  const info = clientIpInfo(req);
+  const headers = {};
+  IP_DEBUG_HEADERS.forEach((h) => { if (req.headers[h] !== undefined) headers[h] = String(req.headers[h]); });
+  return { ip: info.ip, source: info.source, mode: CLIENT_IP_MODE, proxy_ip: checks.normalizeIp(req.ip), socket_ip: checks.normalizeIp(req.socket.remoteAddress), trust_proxy: String(app.get('trust proxy')), headers };
+}
 
 app.use(express.json({ limit: '8mb' })); // 請假附件以 base64 上傳（上限 5MB）
 app.use(express.static(path.join(__dirname, 'public')));
@@ -311,12 +322,14 @@ app.get('/api/public/info', (req, res) => {
   const c = getCheckSettings();
   res.json({ company_name: s.company_name, work_start: s.work_start, server_time: Date.now(), require_network: c.net_enforced, require_location: c.loc_enforced, max_accuracy: c.loc_max_accuracy });
 });
+// 診斷用：顯示伺服器判斷的連線 IP 與相關代理標頭（不含任何密碼或 token）
+app.get('/api/public/whoami', (req, res) => { res.set('Cache-Control', 'no-store'); res.json(ipDebug(req)); });
 app.get('/api/public/employees', (req, res) => {
   res.json(db.prepare('SELECT id, name FROM employees WHERE active=1 ORDER BY id').all());
 });
 app.post('/api/login', (req, res) => {
   const { employee_id, pin } = req.body || {};
-  const key = `emp|${req.ip}|${employee_id}`;
+  const key = `emp|${clientIp(req)}|${employee_id}`;
   if (checkLock(key)) return res.status(429).json({ error: '錯誤次數過多，請 5 分鐘後再試' });
   const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(Number(employee_id));
   if (!emp || String(pin) !== emp.pin) { addFail(key); return res.status(401).json({ error: 'PIN 碼錯誤' }); }
@@ -374,7 +387,7 @@ app.post('/api/punch', requireEmployee, (req, res) => {
 
 // ---------- 管理端 API ----------
 app.post('/api/admin/login', (req, res) => {
-  const key = `admin|${req.ip}`;
+  const key = `admin|${clientIp(req)}`;
   if (checkLock(key)) return res.status(429).json({ error: '錯誤次數過多，請 5 分鐘後再試' });
   if (!verifyPassword(String(req.body?.password || ''), getSetting('admin_password'))) { addFail(key); return res.status(401).json({ error: '密碼錯誤' }); }
   failures.delete(key);
@@ -393,7 +406,7 @@ app.get('/api/admin/me', (req, res) => res.json({ ok: true, default_password: ve
 // 管理員目前連線的 IP（給「使用目前連線的 IP」按鈕與診斷用）
 app.get('/api/admin/my-ip', (req, res) => {
   const ip = clientIp(req);
-  res.json({ ip, suggestion: checks.suggestEntry(ip), is_private: checks.isPrivateIp(ip), socket_ip: checks.normalizeIp(req.socket.remoteAddress), x_forwarded_for: req.headers['x-forwarded-for'] || '', trust_proxy: String(app.get('trust proxy')) });
+  res.json({ ...ipDebug(req), ip, suggestion: checks.suggestEntry(ip), is_private: checks.isPrivateIp(ip), x_forwarded_for: req.headers['x-forwarded-for'] || '' });
 });
 app.put('/api/admin/checks', (req, res) => {
   const b = req.body || {};
