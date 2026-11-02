@@ -1,0 +1,19 @@
+{
+  "name": "clockin-app",
+  "version": "1.0.0",
+  "description": "員工上下班打卡系統",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "exceljs": "^4.4.0",
+    "express": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "private": true
+}

@@ -1,0 +1,461 @@
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem('emp_token');
+let me = null;
+let pinEmp = null, pin = '';
+hydrateIcons();
+
+function auth() { return { Authorization: 'Bearer ' + token }; }
+function show(view) {
+  ['pickView', 'pinView', 'mainView'].forEach((v) => $(v).classList.toggle('hidden', v !== view));
+  $('logoutBtn').classList.toggle('hidden', view !== 'mainView');
+  $('statusLine').classList.toggle('hidden', view !== 'mainView');
+  renderGreeting();
+}
+
+// ---------- 時鐘 ----------
+function tick() {
+  const n = nowMs(); const t = fmtClock(n);
+  $('clockTime').innerHTML = `<span class="hm">${t.slice(0, 5)}</span><span class="sec">${t.slice(5)}</span>`;
+  $('clockDate').textContent = fmtLongDate(n);
+}
+setInterval(tick, 1000);
+function renderGreeting() {
+  const g = greetingInfo();
+  $('heroGreet').innerHTML = me && !$('mainView').classList.contains('hidden')
+    ? `${icon(g.icon, 18)}<span>${g.text}，<b>${esc(me.employee.name)}</b></span>`
+    : `${icon(g.icon, 18)}<span>${g.text}！今天也辛苦了</span>`;
+}
+
+async function init() {
+  try {
+    const info = await api('/api/public/info');
+    serverOffset = info.server_time - Date.now();
+    $('company').textContent = info.company_name;
+  } catch (e) {}
+  tick();
+  if (token) {
+    try { me = await api('/api/me', { headers: auth() }); renderMain(); show('mainView'); return; }
+    catch (e) { localStorage.removeItem('emp_token'); token = null; }
+  }
+  showPick();
+}
+
+// ---------- 選擇姓名 / PIN ----------
+async function showPick() {
+  me = null;
+  const list = await api('/api/public/employees');
+  $('names').innerHTML = list.length ? list.map((e) => `<button class="name-btn" data-id="${e.id}" data-name="${esc(e.name)}">${avatar(e.name)}<span>${esc(e.name)}</span></button>`).join('')
+    : `<div class="card empty" style="grid-column:1/-1"><span class="empty-ic">${icon('users', 26)}</span><b>尚未建立員工</b>請管理員先到後台新增員工。</div>`;
+  document.querySelectorAll('.name-btn').forEach((b) => b.onclick = () => {
+    pinEmp = { id: b.dataset.id, name: b.dataset.name }; pin = '';
+    $('pinName').textContent = pinEmp.name; $('pinAvatar').innerHTML = avatar(pinEmp.name, 'lg');
+    renderDots(); show('pinView');
+  });
+  show('pickView');
+}
+function renderDots() { [...$('pinDots').children].forEach((s, i) => s.classList.toggle('on', i < pin.length)); }
+$('keypad').innerHTML = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '返回', '0', '刪除'].map((k) => {
+  if (k === '返回') return `<button class="fn" data-k="返回" aria-label="返回"><span>${icon('chevronLeft', 22)}返回</span></button>`;
+  if (k === '刪除') return `<button class="fn" data-k="刪除" aria-label="刪除"><span>${icon('backspace', 22)}刪除</span></button>`;
+  return `<button data-k="${k}">${k}</button>`;
+}).join('');
+$('keypad').onclick = async (e) => {
+  const btn = e.target.closest('[data-k]'); if (!btn) return;
+  const k = btn.dataset.k;
+  if (k === '返回') return showPick();
+  if (k === '刪除') { pin = pin.slice(0, -1); return renderDots(); }
+  if (pin.length >= 4) return;
+  pin += k; renderDots();
+  if (pin.length === 4) {
+    try {
+      const r = await api('/api/login', { method: 'POST', body: { employee_id: pinEmp.id, pin } });
+      token = r.token; localStorage.setItem('emp_token', token);
+      me = await api('/api/me', { headers: auth() }); renderMain(); show('mainView');
+    } catch (err) {
+      toast(err.message, 'err'); $('pinDots').classList.add('shake');
+      setTimeout(() => { $('pinDots').classList.remove('shake'); pin = ''; renderDots(); }, 450);
+    }
+  }
+};
+
+// ---------- 打卡條件 ----------
+function renderChecks() {
+  const c = me.checks || {};
+  const pills = [];
+  if (c.require_network) pills.push(c.network_ok
+    ? `<span class="pill ok">${icon('wifi')}已連上公司網路</span>`
+    : `<span class="pill bad">${icon('wifiOff')}目前未連上公司 WiFi<span class="sub">（IP：${esc(c.ip)}）</span></span>`);
+  if (c.require_location) pills.push(window.isSecureContext
+    ? `<span class="pill neutral">${icon('pin')}打卡時會確認位置</span>`
+    : `<span class="pill bad">${icon('pin')}非 HTTPS 連線，無法定位</span>`);
+  $('checkCard').innerHTML = pills.join('');
+  $('checkCard').classList.toggle('hidden', !pills.length);
+}
+function showBlocked(reasons) {
+  if (!reasons || !reasons.length) { $('blockCard').classList.add('hidden'); return; }
+  $('blockCard').innerHTML = `<h4>${icon('ban')}無法打卡</h4><ul>${reasons.map((r) => `<li>${icon(/WiFi|IP/.test(r) ? 'wifiOff' : 'pin', 16)}<span>${esc(r)}</span></li>`).join('')}</ul>
+    <div class="tip">若您確實在公司，請改善上述狀況後再按一次；仍無法打卡請通知管理員補登。</div>`;
+  $('blockCard').classList.remove('hidden');
+  // 讓重新渲染時保留動畫
+  $('blockCard').style.animation = 'none'; void $('blockCard').offsetWidth; $('blockCard').style.animation = '';
+}
+const GEO_MSG = {
+  denied: '您拒絕了定位權限，請到手機設定或瀏覽器網站設定中允許此網站使用位置。',
+  unavailable: '無法取得您的位置，請確認手機已開啟定位服務（GPS）。',
+  timeout: '定位逾時，請移動到窗邊或訊號較好的地方再試一次。',
+  insecure: '定位功能需要 HTTPS 安全連線，請使用 https:// 開頭的網址。',
+  unsupported: '此瀏覽器不支援定位功能。',
+};
+function getLocation() {
+  return new Promise((resolve) => {
+    if (!window.isSecureContext) return resolve({ loc_error: 'insecure' });
+    if (!navigator.geolocation) return resolve({ loc_error: 'unsupported' });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ location: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy } }),
+      (err) => resolve({ loc_error: err.code === 1 ? 'denied' : err.code === 3 ? 'timeout' : 'unavailable' }),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
+function busy(text) {
+  let el = document.querySelector('.busy');
+  if (!text) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.className = 'busy'; document.body.appendChild(el); }
+  el.innerHTML = `<div class="busy-card"><div class="spinner"></div><div>${esc(text)}</div></div>`;
+}
+
+// ---------- 主畫面 ----------
+function renderMain() {
+  renderChecks();
+  renderGreeting();
+  $('hello').textContent = `${me.employee.name}，${greetingInfo().text}！`;
+  const s = me.today_summary;
+  const lastIn = [...me.today_punches].reverse().find((p) => p.type === 'in');
+  const lastOut = [...me.today_punches].reverse().find((p) => p.type === 'out');
+  let html = '';
+  if (me.status === 'none') html = '<span class="chip"><span class="dot"></span>今天尚未打卡</span>';
+  else if (me.status === 'in') html = `<span class="chip on"><span class="dot"></span>上班中<span class="sub">自 ${lastIn.time} 開始</span></span>`;
+  else html = `<span class="chip off"><span class="dot"></span>已下班<span class="sub">今日工時 ${s ? s.worked_text : ''}</span></span>`;
+  if (s && s.late) html += `<span class="chip late">${icon('alertCircle', 15)}遲到 ${s.late_min} 分鐘</span>`;
+  if (s && s.leave_text) html += `<span class="chip leave">${icon('palm', 15)}今日請假<span class="sub">${esc(s.leave_text)}</span></span>`;
+  $('statusLine').innerHTML = html;
+
+  $('btnIn').disabled = me.status === 'in';
+  $('btnOut').disabled = me.status !== 'in';
+  $('btnInSub').textContent = me.status === 'in' ? `已於 ${lastIn.time} 上班` : me.status === 'out' ? '再次上班' : '開始工作';
+  $('btnOutSub').textContent = me.status === 'in' ? '結束工作' : me.status === 'out' ? `已於 ${lastOut.time} 下班` : '請先打上班卡';
+
+  $('todayList').innerHTML = me.today_punches.length ? `<ul class="timeline">${me.today_punches.map((p) => `
+    <li><span class="tl-dot ${p.type}">${icon(p.type === 'in' ? 'login' : 'logout', 13)}</span>
+      <span class="tl-time">${p.time}</span>
+      <span class="tl-text">${p.type_text}打卡</span>
+      ${p.edited ? `<span class="badge b-neutral">${icon('pencil')}管理員修改</span>` : '<span class="badge b-success">本人打卡</span>'}</li>`).join('')}</ul>`
+    : `<div class="empty" style="padding:22px 8px"><span class="empty-ic">${icon('clock', 24)}</span>今天還沒有打卡紀錄</div>`;
+
+  const std = (me.settings && me.settings.standard_hours) || 8;
+  const past = me.recent;
+  $('recentHint').textContent = past.length ? `共 ${past.length} 天` : '';
+  $('recentList').innerHTML = past.length ? past.map((r) => {
+    const [, lm, ld] = r.date.split('-');
+    if (r.leave_only) return `<div class="day">
+      <div class="day-date"><span class="md">${Number(lm)}/${Number(ld)}</span><span class="wd">週${r.weekday}</span></div>
+      <div style="min-width:0"><div class="day-times">${icon('palm', 14)}${esc(r.leave_text)}</div><div class="bar"><i class="used" style="width:${Math.min(100, (r.leave_hours / std) * 100)}%"></i></div></div>
+      <div class="day-right"><div class="day-hours">請假</div><div class="badges"><span class="badge b-accent">${r.leave_hours}h</span></div></div>
+    </div>`;
+    const pct = Math.min(100, (r.worked_hours / std) * 100);
+    const [, m, d] = r.date.split('-');
+    const badges = [
+      r.late ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${r.late_min} 分</span>` : '',
+      r.overtime_ms ? `<span class="badge b-info">${icon('trend')}加班 ${r.overtime_hours}h</span>` : '',
+      ...r.issues.map((i) => `<span class="badge b-warning">${icon('alert')}${esc(i)}</span>`),
+      r.working_now ? '<span class="badge b-success"><span class="dot"></span>上班中</span>' : '',
+      r.leave_text ? `<span class="badge b-accent">${icon('palm')}${esc(r.leave_text)}</span>` : '',
+    ].join('');
+    return `<div class="day">
+      <div class="day-date"><span class="md">${Number(m)}/${Number(d)}</span><span class="wd">週${r.weekday}</span></div>
+      <div style="min-width:0">
+        <div class="day-times">${icon('login', 14)}${r.first_in || '--:--'}<span class="muted">→</span>${r.last_out || (r.working_now ? '上班中' : '--:--')}</div>
+        <div class="bar"><i class="${r.overtime_ms ? 'ot' : ''}" style="width:${pct}%"></i></div>
+      </div>
+      <div class="day-right"><div class="day-hours">${r.worked_text.replace(' 小時 ', 'h ').replace(' 分', 'm')}</div>${badges ? `<div class="badges">${badges}</div>` : ''}</div>
+    </div>`;
+  }).join('') : `<div class="card empty"><span class="empty-ic">${icon('calendar', 24)}</span>最近沒有打卡紀錄</div>`;
+  if (!lv) loadLeave();
+}
+
+// ---------- 打卡 ----------
+function askConfirm(type) {
+  return new Promise((resolve) => {
+    const isIn = type === 'in';
+    $('confirmIc').className = 's-ic ' + type; $('confirmIc').innerHTML = icon(isIn ? 'login' : 'logout', 28);
+    $('confirmTitle').textContent = isIn ? '確認上班打卡' : '確認下班打卡';
+    $('confirmTime').textContent = fmtClock(nowMs()).slice(0, 5);
+    $('confirmNote').textContent = me.checks && me.checks.require_location ? '按下確認後會取得您的位置' : fmtLongDate(nowMs());
+    $('confirmOk').className = 'btn ' + (isIn ? '' : 'go-out');
+    $('confirmSheet').classList.remove('hidden');
+    $('confirmOk').focus();
+    const done = (v) => { $('confirmSheet').classList.add('hidden'); $('confirmOk').onclick = $('confirmCancel').onclick = $('confirmSheet').onclick = null; resolve(v); };
+    $('confirmOk').onclick = () => done(true);
+    $('confirmCancel').onclick = () => done(false);
+    $('confirmSheet').onclick = (e) => { if (e.target === $('confirmSheet')) done(false); };
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$('confirmSheet').classList.contains('hidden')) $('confirmCancel').click();
+  else if (!$('leaveSheet').classList.contains('hidden')) closeLeaveForm();
+});
+// 通用確認面板（取消請假等）
+function askSheet({ ic, tone, title, big, note, ok, okCls }) {
+  return new Promise((resolve) => {
+    $('confirmIc').className = 's-ic ' + (tone || ''); $('confirmIc').innerHTML = icon(ic, 28);
+    $('confirmTitle').textContent = title;
+    $('confirmTime').className = 's-big'; $('confirmTime').textContent = big || '';
+    $('confirmNote').textContent = note || '';
+    $('confirmOk').className = 'btn ' + (okCls || ''); $('confirmOk').textContent = ok;
+    $('confirmCancel').textContent = '返回';
+    $('confirmSheet').classList.remove('hidden'); $('confirmCancel').focus();
+    const done = (v) => {
+      $('confirmSheet').classList.add('hidden'); $('confirmOk').onclick = $('confirmCancel').onclick = $('confirmSheet').onclick = null;
+      $('confirmTime').className = 's-time'; $('confirmOk').textContent = '確認打卡'; $('confirmCancel').textContent = '取消';
+      resolve(v);
+    };
+    $('confirmOk').onclick = () => done(true);
+    $('confirmCancel').onclick = () => done(false);
+    $('confirmSheet').onclick = (e) => { if (e.target === $('confirmSheet')) done(false); };
+  });
+}
+
+function celebrate(type, message) {
+  const isIn = type === 'in';
+  const s = me.today_summary;
+  const time = (message.match(/\d{2}:\d{2}/) || [''])[0];
+  const badges = [];
+  if (isIn && s && s.late) badges.push(`<span class="badge b-danger">${icon('alertCircle')}遲到 ${s.late_min} 分鐘</span>`);
+  if (isIn && s && !s.late) badges.push(`<span class="badge b-success">${icon('check')}準時</span>`);
+  if (!isIn && s) badges.push(`<span class="badge b-brand">${icon('timer')}今日工時 ${s.worked_text}</span>`);
+  $('successOverlay').innerHTML = `<div class="success-card ${type}">
+    <svg class="ring" viewBox="0 0 104 104" aria-hidden="true"><circle class="bgc" cx="52" cy="52" r="48"/><circle cx="52" cy="52" r="48"/><path d="M34 53 l12 12 l24 -26"/></svg>
+    <h3>${isIn ? '上班打卡成功' : '下班打卡成功'}</h3>
+    <div class="s-time">${time}</div>
+    <p>${isIn ? '祝您今天工作順利！' : '辛苦了，好好休息！'}</p>
+    ${badges.length ? `<div class="badges">${badges.join('')}</div>` : ''}
+  </div>`;
+  $('successOverlay').classList.remove('hidden');
+  $('successOverlay').classList.add('show');
+  const colors = isIn ? ['#14786f', '#6fcfc2', '#f0a37a', '#f5d58c'] : ['#c2541f', '#f0a37a', '#6fcfc2', '#f5d58c'];
+  const conf = document.createElement('div'); conf.className = 'confetti';
+  conf.innerHTML = Array.from({ length: 26 }, (_, i) => {
+    const a = (i / 26) * Math.PI * 2, dist = 140 + Math.random() * 120;
+    return `<i style="background:${colors[i % colors.length]};--x:${Math.cos(a) * dist}px;--y:${Math.sin(a) * dist - 40}px;--r:${Math.random() * 540}deg;animation-delay:${0.35 + Math.random() * .15}s"></i>`;
+  }).join('');
+  document.body.appendChild(conf);
+  const close = () => { $('successOverlay').classList.add('hidden'); $('successOverlay').classList.remove('show'); conf.remove(); };
+  $('successOverlay').onclick = close;
+  clearTimeout(celebrate.t); celebrate.t = setTimeout(close, 2600);
+}
+
+async function punch(type) {
+  if (!(await askConfirm(type))) return;
+  $('btnIn').disabled = $('btnOut').disabled = true;
+  showBlocked(null);
+  try {
+    const body = { type };
+    if (me.checks && me.checks.require_location) {
+      busy('正在確認您的位置…');
+      Object.assign(body, await getLocation());
+      busy(null);
+      if (body.loc_error) toast(GEO_MSG[body.loc_error], 'err');
+    }
+    const r = await api('/api/punch', { method: 'POST', headers: auth(), body });
+    me = r; renderMain(); celebrate(type, r.message);
+    if (navigator.vibrate) navigator.vibrate([30, 40, 60]);
+  } catch (e) {
+    busy(null);
+    if (e.data && e.data.blocked) { showBlocked(e.data.reasons); toast('打卡未成功，請看下方說明', 'err'); }
+    else toast(e.message, 'err');
+    if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); }
+    try { me = await api('/api/me', { headers: auth() }); renderMain(); } catch (_) {}
+  }
+}
+$('btnIn').onclick = () => punch('in');
+$('btnOut').onclick = () => punch('out');
+$('logoutBtn').onclick = async () => {
+  try { await api('/api/logout', { method: 'POST', headers: auth() }); } catch (e) {}
+  localStorage.removeItem('emp_token'); token = null; me = null; lv = null; showBlocked(null); setTab('punch'); showPick();
+};
+// 回到頁面時更新狀態（例如手機螢幕關閉後再打開）
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden && token) { try { me = await api('/api/me', { headers: auth() }); renderMain(); if (curTab === 'leave') loadLeave(); } catch (e) {} }
+});
+
+// =========================================================
+// 請假
+// =========================================================
+let curTab = 'punch', lv = null, lfFile = null, previewSeq = 0, previewOk = false;
+const STATUS_BADGE = { pending: ['b-warning', 'hourglass'], approved: ['b-success', 'check'], rejected: ['b-danger', 'x'], cancelled: ['b-neutral', 'undo'] };
+const WD = ['日', '一', '二', '三', '四', '五', '六'];
+const mdw = (d) => { const [y, m, dd] = d.split('-').map(Number); return `${m}/${dd}（${WD[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()]}）`; };
+function fmtH(h) { const std = (lv && lv.balance.std_hours) || 8; if (!h) return '0 小時'; const d = h / std; return Number.isInteger(d) ? `${d} 天` : Math.abs(h) >= std ? `${Math.floor(d)} 天 ${+(h - Math.floor(d) * std).toFixed(2)} 小時` : `${h} 小時`; }
+
+function setTab(t) {
+  curTab = t;
+  document.querySelectorAll('[data-etab]').forEach((b) => { const on = b.dataset.etab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  $('punchPane').classList.toggle('hidden', t !== 'punch');
+  $('leavePane').classList.toggle('hidden', t !== 'leave');
+  if (t === 'leave') loadLeave();
+}
+document.querySelectorAll('[data-etab]').forEach((b) => b.onclick = () => setTab(b.dataset.etab));
+
+async function loadLeave() {
+  try { lv = await api('/api/leaves', { headers: auth() }); renderLeave(); }
+  catch (e) { if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); } toast(e.message, 'err'); }
+}
+function whenText(l) {
+  if (l.mode === 'full') return l.start_date === l.end_date ? `${mdw(l.start_date)} 全天` : `${mdw(l.start_date)} ～ ${mdw(l.end_date)} 全天`;
+  if (l.mode === 'am' || l.mode === 'pm') { const d = l.days[0]; return `${mdw(l.start_date)} ${l.mode_text}${d ? `（${d.from}～${d.to}）` : ''}`; }
+  const st = l.start_text.slice(11), et = l.end_text.slice(11);
+  return l.start_date === l.end_text.slice(0, 10) ? `${mdw(l.start_date)} ${st}～${et}` : `${mdw(l.start_date)} ${st} ～ ${mdw(l.end_text.slice(0, 10))} ${et}`;
+}
+function renderLeave() {
+  const b = lv.balance;
+  const pend = lv.requests.filter((r) => r.status === 'pending').length;
+  $('leavePendCount').textContent = pend || '';
+  if (b.quota_hours > 0) {
+    const used = Math.min(100, (b.used_hours / b.quota_hours) * 100), pp = Math.min(100 - used, (b.pending_hours / b.quota_hours) * 100);
+    $('balCard').innerHTML = `<div class="bal-top"><span class="bal-ic">${icon('palm', 24)}</span>
+        <div><div class="bal-l">${b.year} 年特休剩餘</div><div class="bal-num">${fmtH(b.remaining_hours)}<small>${b.remaining_hours} 小時</small></div></div></div>
+      <div class="bar" style="margin:0;height:8px" aria-hidden="true"><i class="used" style="width:${used}%"></i><i class="pend" style="left:${used}%;width:${pp}%"></i></div>
+      <div class="bal-meta"><span>年度額度 <b>${fmtH(b.quota_hours)}</b></span><span>已使用 <b>${fmtH(b.used_hours)}</b></span>${b.pending_hours ? `<span>審核中 <b>${fmtH(b.pending_hours)}</b></span>` : ''}</div>`;
+  } else {
+    $('balCard').innerHTML = `<div class="bal-top"><span class="bal-ic">${icon('palm', 24)}</span><div><div class="bal-l">${b.year} 年特休</div><div style="font-weight:600">尚未設定特休額度</div><div class="help" style="margin:0">如有疑問請洽管理員</div></div></div>`;
+  }
+  $('leaveHint').textContent = lv.requests.length ? `共 ${lv.requests.length} 筆` : '';
+  $('leaveList').innerHTML = lv.requests.length ? lv.requests.map((l) => {
+    const [bc, bi] = STATUS_BADGE[l.status];
+    return `<article class="card leave-item ${l.status}">
+      <div class="lv-head">
+        <span class="lv-ic ${l.deduct_annual ? 'annual' : ''}">${icon(l.deduct_annual ? 'palm' : 'calendar', 20)}</span>
+        <div style="min-width:0"><div class="lv-title">${esc(l.type_name)} <span class="muted">· ${esc(l.hours_text)}</span></div><div class="lv-when">${esc(whenText(l))}</div></div>
+        <span class="badge ${bc}">${icon(bi)}${l.status_text}</span>
+      </div>
+      <div class="lv-reason">${esc(l.reason)}</div>
+      ${l.admin_comment ? `<div class="lv-comment ${l.status === 'rejected' ? 'rej' : ''}">${icon('message', 16)}<span><b>管理員：</b>${esc(l.admin_comment)}</span></div>` : ''}
+      <div class="lv-foot"><span class="meta">申請於 ${esc(l.created_text)}</span><span class="grow"></span>
+        ${l.has_attachment ? `<button class="btn ghost sm" data-att="${l.id}">${icon('paperclip', 16)}查看附件</button>` : ''}
+        ${l.status === 'pending' ? `<button class="btn danger-ghost sm" data-cancel="${l.id}">${icon('undo', 16)}取消申請</button>` : ''}
+      </div>
+    </article>`;
+  }).join('') : `<div class="card empty"><span class="empty-ic">${icon('calendar', 24)}</span><b>還沒有請假紀錄</b>按上方「申請請假」即可送出申請</div>`;
+  $('leaveList').querySelectorAll('[data-cancel]').forEach((btn) => btn.onclick = () => cancelLeave(Number(btn.dataset.cancel)));
+  $('leaveList').querySelectorAll('[data-att]').forEach((btn) => btn.onclick = () => openAttachment(Number(btn.dataset.att)));
+}
+async function cancelLeave(id) {
+  const l = lv.requests.find((x) => x.id === id);
+  const ok = await askSheet({ ic: 'undo', tone: 'danger', title: '取消這筆請假申請？', big: `${l.type_name} · ${l.hours_text}`, note: whenText(l), ok: '確定取消', okCls: 'go-danger' });
+  if (!ok) return;
+  try { await api(`/api/leaves/${id}/cancel`, { method: 'POST', headers: auth() }); toast('已取消請假申請', 'ok'); loadLeave(); }
+  catch (e) { toast(e.message, 'err'); loadLeave(); }
+}
+async function openAttachment(id) {
+  const w = window.open('', '_blank');
+  try {
+    const r = await fetch(`/api/leaves/${id}/attachment`, { headers: auth() });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || '無法開啟附件');
+    const url = URL.createObjectURL(await r.blob());
+    if (w) w.location = url; else location.href = url;
+  } catch (e) { if (w) w.close(); toast(e.message, 'err'); }
+}
+
+// ---- 申請表單 ----
+function nextWorkday() { let d = taipeiToday(); do { d = addDays(d, 1); } while ([0, 6].includes(new Date(d + 'T00:00:00Z').getUTCDay())); return d; }
+function formVal() {
+  const mode = (document.querySelector('input[name=lfMode]:checked') || {}).value;
+  return { type_id: Number((document.querySelector('input[name=lfType]:checked') || {}).value || 0), mode, start_date: $('lfStart').value,
+    end_date: mode === 'full' ? ($('lfEnd').value || $('lfStart').value) : '', start_time: $('lfStartT').value, end_time: $('lfEndT').value, reason: $('lfReason').value.trim() };
+}
+function selectedType() { const id = formVal().type_id; return lv.types.find((t) => t.id === id); }
+function syncForm() {
+  const f = formVal();
+  $('lfEndWrap').classList.toggle('hidden', f.mode !== 'full');
+  $('lfTimes').classList.toggle('hidden', f.mode !== 'hours');
+  $('lfDates').classList.toggle('row2', f.mode === 'full');
+  $('lfStartLabel').textContent = f.mode === 'full' ? '開始日期' : '日期';
+  if (f.mode === 'full' && $('lfEnd').value && $('lfEnd').value < $('lfStart').value) $('lfEnd').value = $('lfStart').value;
+  $('lfEnd').min = $('lfStart').value;
+  const t = selectedType();
+  $('lfTypeHint').classList.toggle('hidden', !t || (!t.needs_attachment && !t.deduct_annual));
+  if (t) $('lfTypeHint').innerHTML = t.deduct_annual ? `${icon('info', 14)} 特休會從年度額度扣除，目前可用 ${fmtH(Math.max(0, lv.balance.available_hours))}` : `${icon('paperclip', 14)} 建議附上證明文件`;
+  preview();
+}
+let pvTimer = null;
+function preview() { clearTimeout(pvTimer); pvTimer = setTimeout(doPreview, 180); }
+async function doPreview() {
+  const f = formVal(); const seq = ++previewSeq; const box = $('lfPreview');
+  previewOk = false;
+  if (!f.mode || !f.start_date || (f.mode === 'hours' && (!f.start_time || !f.end_time))) { box.className = 'preview-box'; box.innerHTML = `<div class="muted">${icon('timer', 16)} 選好日期後會自動計算時數</div>`; return; }
+  try {
+    const r = await api('/api/leaves/preview', { method: 'POST', headers: auth(), body: f });
+    if (seq !== previewSeq) return;
+    const t = selectedType();
+    if (!r.hours) { box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}所選時間不含上班時段</div><div>週六、週日與下班時間不需要請假</div>`; return; }
+    previewOk = true;
+    let bal = '';
+    if (t && t.deduct_annual) {
+      const after = +(lv.balance.available_hours - r.hours).toFixed(2);
+      bal = after < 0 ? `<div class="pv-bal bad">${icon('alertCircle', 14)} 特休可用 ${fmtH(Math.max(0, lv.balance.available_hours))}，不足本次 ${fmtH(r.hours)}</div>`
+        : `<div class="pv-bal">送出後特休可用：${fmtH(lv.balance.available_hours)} → <b>${fmtH(after)}</b></div>`;
+    }
+    box.className = 'preview-box';
+    box.innerHTML = `<div class="pv-total">${icon('timer', 18)}共 ${esc(r.hours_text)}</div>
+      ${r.days.length > 1 || f.mode !== 'full' ? `<div class="pv-days">${r.days.map((d) => `<div><span>${mdw(d.date)} ${d.from}～${d.to}</span><span>${d.hours} 小時</span></div>`).join('')}</div>` : `<div class="pv-days"><div><span>${mdw(r.days[0].date)} ${r.days[0].from}～${r.days[0].to}</span><span>扣除午休</span></div></div>`}
+      ${bal}`;
+  } catch (e) { if (seq !== previewSeq) return; box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}${esc(e.message)}</div>`; }
+}
+function openLeaveForm() {
+  if (!lv) return;
+  const w = lv.work;
+  $('leaveWorkHint').textContent = `上班 ${w.work_start}～${w.work_end}${w.lunch_enabled ? `，午休 ${w.lunch_start}～${w.lunch_end}` : ''}`;
+  $('lfTypes').innerHTML = lv.types.map((t, i) => `<label class="opt"><input type="radio" name="lfType" value="${t.id}" ${i === 0 ? 'checked' : ''}><span>${esc(t.name)}</span></label>`).join('');
+  $('lfModes').innerHTML = [['full', '全天', ''], ['am', '上午', w.am], ['pm', '下午', w.pm], ['hours', '指定時間', '']]
+    .map(([v, t, sub], i) => `<label class="opt"><input type="radio" name="lfMode" value="${v}" ${i === 0 ? 'checked' : ''}><span>${t}${sub ? `<small>${sub}</small>` : ''}</span></label>`).join('');
+  const d = nextWorkday();
+  $('lfStart').value = d; $('lfEnd').value = d; $('lfStart').min = addDays(taipeiToday(), -60);
+  $('lfStartT').value = w.work_start; $('lfEndT').value = w.lunch_enabled ? w.lunch_start : w.work_end;
+  $('lfReason').value = ''; clearFile();
+  $('leaveSheet').classList.remove('hidden');
+  $('leaveForm').scrollTop = 0;
+  syncForm();
+  setTimeout(() => { const c = document.querySelector('input[name=lfType]:checked'); if (c) c.focus(); }, 50);
+}
+function closeLeaveForm() { $('leaveSheet').classList.add('hidden'); $('newLeave').focus(); }
+function clearFile() { lfFile = null; $('lfFile').value = ''; $('lfFileChosen').classList.add('hidden'); $('lfFilePick').classList.remove('hidden'); }
+$('lfFile').onchange = () => {
+  const f = $('lfFile').files[0]; if (!f) return clearFile();
+  if (f.size > 5 * 1024 * 1024) { toast('附件不能超過 5MB，請壓縮或改拍一張', 'err'); return clearFile(); }
+  if (!/^image\/|application\/pdf/.test(f.type) && !/\.(heic|heif|pdf|jpe?g|png|gif|webp)$/i.test(f.name)) { toast('附件只接受圖片或 PDF', 'err'); return clearFile(); }
+  lfFile = f; $('lfFileName').textContent = `${f.name}（${f.size >= 1024 * 1024 ? (f.size / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'}）`;
+  $('lfFileChosen').classList.remove('hidden'); $('lfFilePick').classList.add('hidden');
+};
+$('lfFileClear').onclick = clearFile;
+$('newLeave').onclick = openLeaveForm;
+$('lfCancel').onclick = closeLeaveForm;
+$('leaveSheet').onclick = (e) => { if (e.target === $('leaveSheet')) closeLeaveForm(); };
+$('leaveForm').addEventListener('change', syncForm);
+['lfStart', 'lfEnd', 'lfStartT', 'lfEndT'].forEach((id) => $(id).addEventListener('input', syncForm));
+const readFile = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('讀取附件失敗')); r.readAsDataURL(f); });
+$('leaveForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const f = formVal();
+  if (!f.type_id) return toast('請選擇假別', 'err');
+  if (!f.reason) { $('lfReason').focus(); return toast('請填寫請假原因', 'err'); }
+  const btn = $('lfSubmit'); btn.disabled = true;
+  try {
+    if (lfFile) f.attachment = { name: lfFile.name, data: await readFile(lfFile) };
+    const r = await api('/api/leaves', { method: 'POST', headers: auth(), body: f });
+    closeLeaveForm(); toast(r.message, 'ok'); await loadLeave();
+  } catch (err) { toast(err.message, 'err'); }
+  finally { btn.disabled = false; }
+};
+
+init();

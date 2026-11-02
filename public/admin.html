@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f4f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1412" media="(prefers-color-scheme: dark)">
+<title>管理後台｜員工打卡系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<!-- 登入 -->
+<div id="loginView" class="login-box hidden">
+  <div class="card login-card">
+    <span class="brand-mark"><i data-icon="shield" data-size="26"></i></span>
+    <h2>管理後台登入</h2>
+    <p class="sub">員工打卡系統・請輸入管理員密碼</p>
+    <form id="loginForm" class="form-grid">
+      <div><label for="loginPw">管理員密碼</label>
+        <div class="input-icon"><i data-icon="lock" data-size="18"></i><input type="password" id="loginPw" autocomplete="current-password" required></div></div>
+      <button class="btn block" type="submit"><i data-icon="login" data-size="18"></i>登入</button>
+    </form>
+    <div style="text-align:center;margin-top:16px"><a href="/" class="btn ghost sm"><i data-icon="chevronLeft" data-size="16"></i>回員工打卡頁</a></div>
+  </div>
+</div>
+
+<div id="appView" class="adm hidden">
+  <nav class="side" aria-label="主選單">
+    <div class="brand">
+      <span class="brand-mark"><i data-icon="clock" data-size="20"></i></span>
+      <div style="min-width:0"><div class="brand-name" id="sideTitle">我的公司</div><div class="brand-sub">打卡管理後台</div></div>
+    </div>
+    <div class="nav-label">管理</div>
+    <a data-page="overview" class="active"><i data-icon="dashboard"></i>今日總覽</a>
+    <a data-page="records"><i data-icon="list"></i>打卡紀錄</a>
+    <a data-page="leave"><i data-icon="palm"></i>請假<span class="nav-count" id="navLeaveCount" aria-label="待審核請假"></span></a>
+    <a data-page="employees"><i data-icon="users"></i>員工管理</a>
+    <a data-page="settings"><i data-icon="sliders"></i>設定</a>
+    <a data-page="audit"><i data-icon="history"></i>修改紀錄</a>
+    <div class="spacer"></div>
+    <div class="side-foot">
+      <a href="/" target="_blank"><i data-icon="phone"></i>員工打卡頁</a>
+      <a id="logout"><i data-icon="logout"></i>登出</a>
+    </div>
+  </nav>
+
+  <main class="main"><div class="main-inner">
+    <div class="banners">
+      <div id="pwWarn" class="alert warn hidden"><i data-icon="key" data-size="18"></i><div>您仍在使用預設密碼 <b>admin1234</b>，請到「設定」變更密碼。</div></div>
+      <div id="checkWarn" class="alert warn hidden"></div>
+    </div>
+
+    <!-- 今日總覽 -->
+    <section data-sec="overview">
+      <div class="page-head"><div><h1>今日總覽</h1><p id="ovTitle"></p></div>
+        <a class="btn secondary" data-goto="records"><i data-icon="list" data-size="18"></i>查看打卡紀錄</a></div>
+      <div class="stats ov-stats">
+        <div class="card stat tone-success"><span class="s-ic"><i data-icon="userCheck"></i></span><div class="n" id="stIn">0</div><div class="l">目前在班人數</div></div>
+        <div class="card stat tone-brand"><span class="s-ic"><i data-icon="users"></i></span><div class="n"><span id="stArrived">0</span><small>/ <span id="stTotal">0</span></small></div><div class="l">今日已打卡</div></div>
+        <div class="card stat tone-danger"><span class="s-ic"><i data-icon="alertCircle"></i></span><div class="n" id="stLate">0</div><div class="l">今日遲到</div></div>
+        <button type="button" class="card stat tone-accent clickable" id="stLeaveCard" aria-label="前往請假審核"><span class="s-ic"><i data-icon="palm"></i></span><span class="s-flag" id="stLeaveFlag"></span><div class="n"><span id="stLeavePend">0</span><small>筆</small></div><div class="l">待審核請假・今日請假 <span id="stOnLeave">0</span> 人</div></button>
+        <div class="card stat tone-info"><span class="s-ic"><i data-icon="timer"></i></span><div class="n"><span id="stMonthH">0</span><small>小時</small></div><div class="l">本月工時</div></div>
+        <div class="card stat tone-info"><span class="s-ic"><i data-icon="trend"></i></span><div class="n"><span id="stMonthOT">0</span><small>小時</small></div><div class="l">本月加班</div></div>
+        <div class="card stat tone-warning"><span class="s-ic"><i data-icon="ban"></i></span><div class="n" id="stBlocked">0</div><div class="l">今日被拒打卡</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card table-card">
+          <div style="padding:18px 20px 6px"><div class="card-title">今日出勤</div><p class="card-sub" style="margin:0 0 8px">每位員工今天的打卡狀況</p></div>
+          <div class="table-wrap"><table><thead><tr><th>員工</th><th>狀態</th><th>上班</th><th>下班</th><th>今日工時</th><th>備註</th></tr></thead><tbody id="ovBody"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-title">打卡地點限制</div><p class="card-sub">員工需符合條件才能打卡</p>
+          <div class="mini-list" id="ovChecks"></div>
+          <div class="card-title" style="margin-top:22px">本月概況</div><p class="card-sub" id="ovMonthSub"></p>
+          <div class="mini-list" id="ovMonth"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 打卡紀錄 -->
+    <section data-sec="records" class="hidden">
+      <div class="page-head"><div><h1>打卡紀錄</h1><p>依日期與員工查詢、補登與匯出</p></div>
+        <div class="inline-actions">
+          <button class="btn secondary" id="expCsv"><i data-icon="download" data-size="18"></i>匯出 CSV</button>
+          <button class="btn secondary" id="expXlsx"><i data-icon="sheet" data-size="18"></i>匯出 Excel</button>
+          <button class="btn" id="addPunch"><i data-icon="plus" data-size="18"></i>補登打卡</button>
+        </div></div>
+      <div class="card">
+        <div class="filters">
+          <div><label for="fFrom">開始日期</label><input type="date" id="fFrom"></div>
+          <div><label for="fTo">結束日期</label><input type="date" id="fTo"></div>
+          <div><label for="fEmp">員工</label><select id="fEmp"><option value="">全部員工</option></select></div>
+          <button class="btn" id="fSearch"><i data-icon="search" data-size="18"></i>查詢</button>
+        </div>
+        <div class="toolbar">
+          <span class="muted" style="font-size:13px;margin-right:4px">快速選擇</span>
+          <button class="chip-btn" data-quick="today">今天</button>
+          <button class="chip-btn" data-quick="week">最近 7 天</button>
+          <button class="chip-btn" data-quick="month">本月</button>
+          <button class="chip-btn" data-quick="lastmonth">上個月</button>
+        </div>
+      </div>
+      <div class="stats compact" style="margin-top:16px">
+        <div class="card stat tone-brand"><span class="s-ic"><i data-icon="calendar"></i></span><div class="n" id="tDays">0</div><div class="l">出勤人日</div></div>
+        <div class="card stat tone-info"><span class="s-ic"><i data-icon="timer"></i></span><div class="n" id="tHours">0</div><div class="l">總工時（小時）</div></div>
+        <div class="card stat tone-accent"><span class="s-ic"><i data-icon="trend"></i></span><div class="n" id="tOT">0</div><div class="l">加班（小時）</div></div>
+        <div class="card stat tone-danger"><span class="s-ic"><i data-icon="alertCircle"></i></span><div class="n" id="tLate">0</div><div class="l">遲到次數</div></div>
+        <div class="card stat tone-warning"><span class="s-ic"><i data-icon="alert"></i></span><div class="n" id="tIssue">0</div><div class="l">異常（缺卡）</div></div>
+        <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="tLeave">0</div><div class="l">請假（小時）</div></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="on" data-tab="daily"><i data-icon="calendar" data-size="16"></i>每日工時</button>
+        <button data-tab="punches"><i data-icon="clock" data-size="16"></i>打卡明細（可修改）</button>
+        <button data-tab="blocked"><i data-icon="ban" data-size="16"></i>被拒絕的打卡 <span class="count" id="blockedCount"></span></button>
+      </div>
+      <div class="card table-card" id="tabDaily"><div class="table-wrap"><table><thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>加班</th><th>狀態</th></tr></thead><tbody id="dailyBody"></tbody></table></div></div>
+      <div class="card table-card hidden" id="tabPunches"><div class="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>來源 / 修改註記</th><th></th></tr></thead><tbody id="punchBody"></tbody></table></div></div>
+      <div class="card table-card hidden" id="tabBlocked"><div class="table-wrap"><table><thead><tr><th>日期</th><th>時間</th><th>員工</th><th>類型</th><th>網路（IP）</th><th>位置</th><th>拒絕原因</th></tr></thead><tbody id="blockedBody"></tbody></table></div>
+        <p class="help" style="margin:0;padding:12px 18px;border-top:1px solid var(--line)">員工因不在公司網路或位置範圍而被拒絕的打卡會記錄在這裡。若是公司 IP 變了，可從這裡看到員工目前的 IP。</p></div>
+    </section>
+
+    <!-- 請假 -->
+    <section data-sec="leave" class="hidden">
+      <div class="page-head"><div><h1>請假管理</h1><p>審核員工請假、查看誰請假，並設定假別與特休額度</p></div></div>
+      <div class="tabs" role="tablist" aria-label="請假分頁">
+        <button class="on" data-ltab="pending" role="tab"><i data-icon="hourglass" data-size="16"></i>待審核 <span class="count" id="lvPendTab"></span></button>
+        <button data-ltab="list" role="tab"><i data-icon="list" data-size="16"></i>全部紀錄</button>
+        <button data-ltab="cal" role="tab"><i data-icon="calendar" data-size="16"></i>行事曆</button>
+        <button data-ltab="setup" role="tab"><i data-icon="palm" data-size="16"></i>特休額度與假別</button>
+      </div>
+
+      <div data-lpane="pending"><div class="pending-list" id="pendList"></div></div>
+
+      <div data-lpane="list" class="hidden">
+        <div class="card">
+          <div class="filters leave-filters">
+            <div><label for="lfFrom">開始日期</label><input type="date" id="lfFrom"></div>
+            <div><label for="lfTo">結束日期</label><input type="date" id="lfTo"></div>
+            <div><label for="lfEmp">員工</label><select id="lfEmp"><option value="">全部員工</option></select></div>
+            <div><label for="lfType">假別</label><select id="lfType"><option value="">全部假別</option></select></div>
+            <div><label for="lfStatus">狀態</label><select id="lfStatus"><option value="">全部狀態</option><option value="pending">待審核</option><option value="approved">已核准</option><option value="rejected">已退回</option><option value="cancelled">已取消</option></select></div>
+          </div>
+        </div>
+        <div class="card table-card" style="margin-top:16px"><div class="table-wrap"><table><thead><tr><th>員工</th><th>假別</th><th>期間</th><th>時數</th><th>原因</th><th>狀態</th><th>審核意見</th><th></th></tr></thead><tbody id="lvBody"></tbody></table></div></div>
+      </div>
+
+      <div data-lpane="cal" class="hidden">
+        <div class="card">
+          <div class="cal-head">
+            <button class="btn secondary sm icon-only" id="calPrev" aria-label="上個月"><i data-icon="chevronLeft" data-size="18"></i></button>
+            <h3 id="calTitle"></h3>
+            <button class="btn secondary sm icon-only" id="calNext" aria-label="下個月"><i data-icon="chevronRight" data-size="18"></i></button>
+            <button class="chip-btn" id="calToday">本月</button>
+            <span style="flex:1"></span>
+            <select id="calEmp" style="width:auto;min-width:160px" aria-label="篩選員工"><option value="">全部員工</option></select>
+            <label class="switch-row" for="calPend" style="min-height:36px"><input type="checkbox" class="switch" id="calPend" checked><span class="d" style="font-size:14px;color:var(--text-2)">顯示待審核</span></label>
+          </div>
+          <div class="cal" id="calGrid"></div>
+          <div class="cal-legend"><span><i style="background:var(--accent-soft)"></i>特休（已核准）</span><span><i style="background:var(--brand-soft);border:1px solid var(--brand-soft-2)"></i>其他假別（已核准）</span><span><i style="background:var(--warning-bg);border:1px dashed var(--warning-line)"></i>待審核</span><span class="muted">週六、週日以灰底顯示，不計請假時數</span></div>
+        </div>
+      </div>
+
+      <div data-lpane="setup" class="hidden">
+        <div class="card set-section" style="margin-bottom:18px">
+          <div class="set-head"><span class="s-ic"><i data-icon="palm"></i></span><div><h3>特休額度</h3><p id="balHint">每位員工今年的特休額度（以小時計）。核准「特休」時會自動扣除；額度依曆年（1/1～12/31）計算，跨年不會自動結轉。</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>員工</th><th>到職日</th><th>勞基法建議</th><th>年度額度</th><th>已核准使用</th><th>審核中</th><th>剩餘</th><th></th></tr></thead><tbody id="balBody"></tbody></table></div>
+        </div>
+        <div class="card set-section">
+          <div class="set-head" style="align-items:center"><span class="s-ic"><i data-icon="tag"></i></span><div style="flex:1"><h3>假別</h3><p>員工申請時可選的假別。停用後不會出現在申請表，但舊紀錄會保留。</p></div>
+            <button class="btn sm" id="addType"><i data-icon="plus" data-size="16"></i>新增假別</button></div>
+          <div class="table-wrap"><table><thead><tr><th>假別</th><th>扣特休額度</th><th>建議附證明</th><th>狀態</th><th></th></tr></thead><tbody id="typeBody"></tbody></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 員工管理 -->
+    <section data-sec="employees" class="hidden">
+      <div class="page-head"><div><h1>員工管理</h1><p>新增員工並設定打卡用的 4 位數 PIN 碼</p></div>
+        <button class="btn" id="addEmp"><i data-icon="plus" data-size="18"></i>新增員工</button></div>
+      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>員工</th><th>PIN 碼</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
+      <p class="help" style="margin-top:12px">移除員工後，他將無法再打卡，但歷史打卡紀錄會保留，仍可查詢與匯出。</p>
+    </section>
+
+    <!-- 設定 -->
+    <section data-sec="settings" class="hidden">
+      <div class="page-head"><div><h1>設定</h1><p>出勤規則、打卡地點限制與管理員密碼</p></div></div>
+      <div class="settings-grid">
+        <form id="setForm" class="card set-section">
+          <div class="set-head"><span class="s-ic"><i data-icon="clock"></i></span><div><h3>出勤規則</h3><p>遲到、午休與加班的計算方式</p></div></div>
+          <div class="set-body form-grid">
+            <div><label for="sCompany">公司名稱（顯示於打卡頁）</label><input type="text" id="sCompany"></div>
+            <div class="row2">
+              <div><label for="sStart">上班時間（晚於此時間算遲到）</label><input type="time" id="sStart" required></div>
+              <div><label for="sGrace">遲到寬限（分鐘）</label><input type="number" id="sGrace" min="0" max="120"></div>
+            </div>
+            <label class="switch-row" for="sLunchOn"><input type="checkbox" class="switch" id="sLunchOn"><span><span class="t">扣除午休時間</span><br><span class="d">此時段不計入工時</span></span></label>
+            <div class="row2">
+              <div><label for="sLunchS">午休開始</label><input type="time" id="sLunchS"></div>
+              <div><label for="sLunchE">午休結束</label><input type="time" id="sLunchE"></div>
+            </div>
+            <div><label for="sHours">標準工時（小時，超過即計算加班）</label><input type="number" id="sHours" min="1" max="24" step="0.5" required></div>
+          </div>
+          <div class="set-foot"><button class="btn" type="submit"><i data-icon="check" data-size="18"></i>儲存設定</button></div>
+        </form>
+
+        <div class="card set-section" id="locCard">
+          <div class="set-head"><span class="s-ic"><i data-icon="shield"></i></span><div><h3>打卡地點限制</h3>
+            <p>開啟後，員工必須「連上公司網路」且／或「人在公司附近」才能打卡。兩項可分別開關；尚未設定完成前不會實際檢查，避免大家被鎖在外面。管理員補登不受限制。</p></div></div>
+          <form id="checksForm">
+            <div class="set-body">
+              <div id="checksWarnBox" class="alert warn hidden" style="margin-bottom:14px"></div>
+              <div class="check-block">
+                <label class="switch-row" for="cNetOn"><input type="checkbox" class="switch" id="cNetOn"><span><span class="t">只允許公司網路（WiFi）打卡</span><br><span class="d">網頁無法讀取 WiFi 名稱，因此改用「公司網路的對外 IP」判斷</span></span></label>
+                <div class="cb-body">
+                  <div><label for="cAllow">允許的 IP 或網段（每行一個，例如 203.0.113.25 或 203.0.113.0/24，# 後可寫備註）</label>
+                    <textarea id="cAllow" rows="3" placeholder="203.0.113.25  # 公司光世代"></textarea></div>
+                  <div class="inline-actions">
+                    <button type="button" class="btn soft sm" id="useMyIp"><i data-icon="wifi" data-size="16"></i>使用目前連線的 IP</button>
+                    <span class="ip-now" id="myIpInfo"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="check-block">
+                <label class="switch-row" for="cLocOn"><input type="checkbox" class="switch" id="cLocOn"><span><span class="t">只允許在公司附近打卡（GPS 定位）</span><br><span class="d">員工打卡時手機會詢問定位權限；需要 HTTPS 網址（本機 localhost 除外）</span></span></label>
+                <div class="cb-body">
+                  <div class="row2">
+                    <div><label for="cLat">公司緯度</label><input type="text" id="cLat" inputmode="decimal" placeholder="25.033964"></div>
+                    <div><label for="cLng">公司經度</label><input type="text" id="cLng" inputmode="decimal" placeholder="121.564472"></div>
+                  </div>
+                  <div class="inline-actions">
+                    <button type="button" class="btn soft sm" id="useMyLoc"><i data-icon="locate" data-size="16"></i>使用目前位置</button>
+                    <a id="mapLink" href="#" target="_blank" rel="noopener" class="btn secondary sm hidden"><i data-icon="map" data-size="16"></i>在地圖上查看</a>
+                    <span class="help" style="margin:0" id="myLocInfo"></span>
+                  </div>
+                  <div class="row2">
+                    <div><label for="cRadius">允許範圍（公尺）</label><input type="number" id="cRadius" min="20" max="5000"></div>
+                    <div><label for="cAcc">定位誤差上限（公尺）</label><input type="number" id="cAcc" min="10" max="2000"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="set-foot"><button class="btn" type="submit"><i data-icon="check" data-size="18"></i>儲存打卡限制</button></div>
+          </form>
+        </div>
+
+        <form id="pwForm" class="card set-section">
+          <div class="set-head"><span class="s-ic"><i data-icon="key"></i></span><div><h3>變更管理員密碼</h3><p>建議使用至少 8 個字元、不易猜測的密碼</p></div></div>
+          <div class="set-body form-grid">
+            <div><label for="pwOld">目前密碼</label><input type="password" id="pwOld" required autocomplete="current-password"></div>
+            <div class="row2">
+              <div><label for="pwNew">新密碼（至少 6 個字元）</label><input type="password" id="pwNew" required autocomplete="new-password"></div>
+              <div><label for="pwNew2">再次輸入新密碼</label><input type="password" id="pwNew2" required autocomplete="new-password"></div>
+            </div>
+          </div>
+          <div class="set-foot"><button class="btn" type="submit"><i data-icon="key" data-size="18"></i>變更密碼</button></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 修改紀錄 -->
+    <section data-sec="audit" class="hidden">
+      <div class="page-head"><div><h1>修改紀錄</h1><p>管理員的所有新增、修改與刪除動作</p></div></div>
+      <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>時間</th><th>動作</th><th>內容</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>
+    </section>
+  </div></main>
+</div>
+
+<div id="modalBg" class="modal-bg hidden"><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
+<script src="/icons.js"></script>
+<script src="/common.js"></script>
+<script src="/admin.js"></script>
+</body>
+</html>
