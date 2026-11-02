@@ -47,6 +47,9 @@ const B = {
   sample: () => '<span class="badge b-accent">示範</span>',
   leave: (t) => `<span class="badge b-accent">${icon('palm')}${esc(t)}</span>`,
   onLeave: () => `<span class="badge b-accent">${icon('palm')}請假</span>`,
+  wfh: () => `<span class="badge b-wfh">${icon('home')}居家</span>`,
+  trip: (d) => `<span class="badge b-trip">${icon('briefcase')}公差${d ? `・${esc(d)}` : ''}</span>`,
+  offsite: (n) => `<span class="badge b-offsite">${icon('mapPinOff')}異地打卡${n > 1 ? ` ${n} 次` : ''}</span>`,
   type: (t, text) => `<span class="badge ${t === 'in' ? 'b-brand' : 'b-accent'}">${icon(t === 'in' ? 'login' : 'logout')}${text}</span>`,
 };
 function emptyRow(cols, title, text, ic = 'inbox') {
@@ -62,6 +65,7 @@ function showCheckWarn(c) {
 }
 const okBadge = (v, okText, badText) => (v === 1 ? `<span class="badge b-success">${icon('check')}${okText}</span>` : v === 0 ? `<span class="badge b-danger">${icon('x')}${badText}</span>` : '<span class="badge b-neutral">未檢查</span>');
 function netCell(p) {
+  if (p.work_mode) return `<span class="badge b-${p.work_mode}">${icon(KIND_IC[p.work_mode])}${p.work_mode_text}・免檢查</span><span class="sub mono">${esc(p.ip || '—')}</span>`;
   if (p.source === 'admin') return `<span class="badge b-neutral">${icon('shield')}管理員略過</span><span class="sub mono">${esc(p.ip)}</span>`;
   return `${okBadge(p.ip_ok, '公司網路', '非公司網路')}<span class="sub mono">${esc(p.ip || '—')}</span>`;
 }
@@ -70,7 +74,16 @@ function locCell(p) {
   const map = p.lat != null ? ` · <a href="https://www.google.com/maps?q=${p.lat},${p.lng}" target="_blank" rel="noopener">地圖</a>` : '';
   const dist = p.distance_m != null ? `距公司 ${p.distance_m} 公尺` : p.lat != null ? '已定位' : '';
   const acc = p.accuracy != null ? `，誤差 ±${p.accuracy}` : '';
+  if (p.work_mode) return `${p.lat != null ? `<span class="badge b-success">${icon('pin')}已記錄 GPS</span>` : '<span class="badge b-danger">未記錄 GPS</span>'}${dist || map ? `<span class="sub">${dist}${acc}${map}</span>` : ''}`;
+  if (p.offsite && p.lat == null) return `<span class="badge b-offsite">${icon('mapPinOff')}GPS 無法取得</span>`;
   return `${okBadge(p.loc_ok, '在範圍內', '不在範圍')}${dist || map ? `<span class="sub">${dist}${acc}${map}</span>` : ''}`;
+}
+const KIND_IC = { wfh: 'home', trip: 'briefcase', leave: 'palm' };
+const workTag = (x) => (x.work_mode === 'wfh' ? B.wfh() : x.work_mode === 'trip' ? B.trip(x.destination) : '') + (x.offsite ? B.offsite(x.offsite_count || 1) : '');
+// 打卡位置的地圖連結（Google Maps）
+function locLinks(locs) {
+  if (!locs || !locs.length) return '';
+  return `<span class="loc-links">${locs.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener" class="${l.offsite ? 'off' : ''}" title="誤差 ±${l.accuracy ?? '?'} 公尺">${icon('pin')}${l.type === 'in' ? '上班' : '下班'} ${l.time} 地圖</a>`).join('')}</span>`;
 }
 const dateCell = (d, w) => `${d.slice(5).replace('-', '/')}<span class="muted">（${w}）</span>`;
 
@@ -87,7 +100,7 @@ async function loadOverview() {
     $('ovBody').innerHTML = o.list.map((x) => `<tr>
       <td><span class="who">${avatar(x.name, 'sm')}${esc(x.name)} ${x.is_sample ? B.sample() : ''}</span></td><td>${st[x.status]}</td>
       <td class="num">${x.first_in || '<span class="muted">—</span>'}</td><td class="num">${x.last_out || '<span class="muted">—</span>'}</td>
-      <td class="num">${x.worked_text || '<span class="muted">—</span>'}</td><td><span class="badges">${x.late ? B.late(x.late_min) : ''}${x.leave_text ? B.leave(x.leave_text) : ''}</span></td></tr>`).join('')
+      <td class="num">${x.worked_text || '<span class="muted">—</span>'}</td><td><span class="badges">${x.late ? B.late(x.late_min) : ''}${x.leave_text ? B.leave(x.leave_text) : ''}${workTag(x)}</span>${locLinks(x.locs)}</td></tr>`).join('')
       || emptyRow(6, '尚無員工', '請到「員工管理」新增員工', 'users');
     const c = o.checks;
     const row = (ic, title, on, configured, detail) => `<div class="mini-item"><span class="s-ic" style="display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:${on && configured ? 'var(--success-bg)' : 'var(--surface-3)'};color:${on && configured ? 'var(--success)' : 'var(--muted)'}">${icon(ic, 18)}</span>
@@ -95,12 +108,15 @@ async function loadOverview() {
       ${on ? (configured ? '<span class="badge b-success">已啟用</span>' : '<span class="badge b-warning">未設定</span>') : '<span class="badge b-neutral">關閉</span>'}</div>`;
     const ipCount = c.net_allowlist.split('\n').filter((l) => l.replace(/#.*/, '').trim()).length;
     $('ovChecks').innerHTML = row('wifi', '公司網路', c.net_check_enabled, c.net_configured, c.net_configured ? `${ipCount} 組允許的 IP` : '尚未設定 IP')
-      + row('pin', '公司位置', c.loc_check_enabled, c.loc_configured, c.loc_configured ? `範圍 ${c.loc_radius} 公尺內` : '尚未設定座標');
+      + row('pin', '公司位置', c.loc_check_enabled, c.loc_configured, c.loc_configured ? `範圍 ${c.loc_radius} 公尺內` : '尚未設定座標')
+      + `<div class="mini-item"><span class="s-ic" style="display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--surface-3);color:var(--text-2)">${icon('logout', 18)}</span><div class="grow"><div class="t">下班打卡</div><div class="d">${c.out_rule === 'strict' ? '與上班相同' : `公司網路或 ${c.out_radius} 公尺內；否則標記異地`}</div></div><span class="badge ${c.out_rule === 'strict' ? 'b-neutral' : 'b-info'}">${c.out_rule === 'strict' ? '嚴格' : '放寬'}</span></div>`;
     $('ovMonthSub').textContent = `${o.month.from.replace(/-/g, '/')} 起累計`;
     $('ovMonth').innerHTML = `
       <div class="mini-item"><div class="grow"><div class="t">遲到次數</div></div><b>${o.month.late} 次</b></div>
       <div class="mini-item"><div class="grow"><div class="t">缺卡／異常</div></div><b>${o.month.issues} 天</b></div>
-      <div class="mini-item"><div class="grow"><div class="t">已核准請假</div></div><b>${o.month.leave_hours} 小時</b></div>`;
+      <div class="mini-item"><div class="grow"><div class="t">已核准請假</div></div><b>${o.month.leave_hours} 小時</b></div>
+      <div class="mini-item"><div class="grow"><div class="t">居家上班／公差</div><div class="d">今天 ${o.remote_today} 人</div></div><b>${o.month.remote_days} 人日</b></div>
+      <div class="mini-item"><div class="grow"><div class="t">異地打卡</div><div class="d">今天 ${o.offsite_today} 人</div></div><b style="${o.month.offsite ? 'color:var(--danger)' : ''}">${o.month.offsite} 次</b></div>`;
   } catch (e) { handle(e); }
 }
 
@@ -116,21 +132,21 @@ async function loadRecords() {
     const r = await api('/api/admin/records?' + query());
     lastRecords = r;
     $('tDays').textContent = r.totals.days; $('tHours').textContent = r.totals.worked_hours; $('tOT').textContent = r.totals.overtime_hours;
-    $('tLate').textContent = r.totals.late_count; $('tIssue').textContent = r.totals.issue_count; $('tLeave').textContent = r.totals.leave_hours;
+    $('tLate').textContent = r.totals.late_count; $('tIssue').textContent = r.totals.issue_count; $('tLeave').textContent = r.totals.leave_hours; $('tOffsite').textContent = r.totals.offsite_count;
     $('dailyBody').innerHTML = r.daily.map((d) => {
-      const tags = [d.late ? B.late(d.late_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
-      return `<tr>
+      const tags = [workTag(d), d.late ? B.late(d.late_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
+      return `<tr class="${d.offsite ? 'row-offsite' : ''}">
       <td class="num">${dateCell(d.date, d.weekday)}</td><td><span class="who">${avatar(d.name, 'sm')}${esc(d.name)}</span></td>
       <td class="num">${d.first_in || '<span class="muted">—</span>'}</td><td class="num">${d.last_out || '<span class="muted">—</span>'}</td>
       <td class="num">${d.leave_only ? '<span class="muted">—</span>' : `<b>${d.worked_text}</b><span class="sub">${d.worked_hours} 小時</span>`}</td>
       <td>${d.overtime_ms ? B.ot(d.overtime_text) : '<span class="muted">—</span>'}</td>
-      <td><span class="badges">${tags || B.normal()}</span></td></tr>`;
+      <td><span class="badges">${tags || B.normal()}</span>${locLinks(d.locs)}</td></tr>`;
     }).join('') || emptyRow(7, '此區間沒有紀錄', '試著調整日期範圍或員工', 'calendar');
-    $('punchBody').innerHTML = r.punches.map((p) => `<tr>
+    $('punchBody').innerHTML = r.punches.map((p) => `<tr class="${p.offsite ? 'row-offsite' : ''}">
       <td class="num">${dateCell(p.date, p.weekday)}</td><td class="num"><b>${p.time}</b></td><td><span class="who">${avatar(p.name, 'sm')}${esc(p.name)}</span></td>
-      <td>${B.type(p.type, p.type_text)}</td>
+      <td><span class="badges">${B.type(p.type, p.type_text)}${p.offsite ? B.offsite(1) : ''}</span></td>
       <td>${netCell(p)}</td><td>${locCell(p)}</td>
-      <td class="wrap">${p.source === 'admin' ? '<b>管理員補登</b>' : '員工打卡'}${p.edit_note ? `<span class="note">${esc(p.edit_note)}</span>` : ''}</td>
+      <td class="wrap">${p.source === 'admin' ? '<b>管理員補登</b>' : '員工打卡'}${p.check_note && (p.offsite || p.work_mode) ? `<span class="note">${esc(p.check_note)}</span>` : ''}${p.edit_note ? `<span class="note">${esc(p.edit_note)}</span>` : ''}</td>
       <td><div class="cell-actions"><button class="btn secondary sm icon-only" data-edit="${p.id}" title="修改" aria-label="修改這筆打卡">${icon('pencil', 16)}</button><button class="btn danger-ghost sm icon-only" data-del="${p.id}" title="刪除" aria-label="刪除這筆打卡">${icon('trash', 16)}</button></div></td></tr>`).join('')
       || emptyRow(8, '此區間沒有紀錄', '試著調整日期範圍或員工', 'clock');
     $('blockedCount').textContent = r.blocked.length ? r.blocked.length : '';
@@ -266,6 +282,7 @@ function fillChecks(c) {
   $('cLocOn').checked = c.loc_check_enabled;
   $('cLat').value = c.loc_lat ?? ''; $('cLng').value = c.loc_lng ?? '';
   $('cRadius').value = c.loc_radius; $('cAcc').value = c.loc_max_accuracy;
+  $(c.out_rule === 'strict' ? 'outStrict' : 'outRelaxed').checked = true; $('cOutRadius').value = c.out_radius; syncOutRule();
   updateMapLink(); showCheckWarn(c); syncCheckBlocks();
   api('/api/admin/my-ip').then((r) => {
     $('myIpInfo').innerHTML = `${icon('globe', 16)}您目前的 IP：<b>${esc(r.ip)}</b>${r.is_private ? '<span class="muted">（內部 IP；部署到雲端後才會看到公司對外 IP）</span>' : ''}`;
@@ -302,10 +319,12 @@ $('useMyLoc').onclick = () => {
     $('myLocInfo').textContent = ''; toast(m, 'err');
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 };
+function syncOutRule() { $('cOutRadius').disabled = $('outStrict').checked; }
+$('outStrict').onchange = $('outRelaxed').onchange = syncOutRule;
 $('checksForm').onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const r = await api('/api/admin/checks', { method: 'PUT', body: { net_check_enabled: $('cNetOn').checked, net_allowlist: $('cAllow').value, loc_check_enabled: $('cLocOn').checked, loc_lat: $('cLat').value, loc_lng: $('cLng').value, loc_radius: $('cRadius').value, loc_max_accuracy: $('cAcc').value } });
+    const r = await api('/api/admin/checks', { method: 'PUT', body: { net_check_enabled: $('cNetOn').checked, net_allowlist: $('cAllow').value, loc_check_enabled: $('cLocOn').checked, loc_lat: $('cLat').value, loc_lng: $('cLng').value, loc_radius: $('cRadius').value, loc_max_accuracy: $('cAcc').value, out_rule: $('outStrict').checked ? 'strict' : 'relaxed', out_radius: $('cOutRadius').value } });
     showCheckWarn(r.checks); toast('打卡限制已儲存', 'ok');
   } catch (err) { handle(err); }
 };
@@ -329,7 +348,10 @@ const lvStatus = (l) => `<span class="badge ${LV_BADGE[l.status][0]}">${icon(LV_
 const WDS = ['日', '一', '二', '三', '四', '五', '六'];
 const wdOf = (d) => WDS[new Date(d + 'T00:00:00Z').getUTCDay()];
 const mdw = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}（${wdOf(d)}）`;
+const isWork = (l) => l.kind && l.kind !== 'leave';
+const typeBadge = (l) => `<span class="badge ${isWork(l) ? `b-${l.kind}` : l.deduct_annual ? 'b-accent' : 'b-brand'}">${isWork(l) ? icon(KIND_IC[l.kind]) : ''}${esc(l.type_name)}</span>`;
 function lvWhen(l) {
+  if (isWork(l)) return l.start_date === l.end_date ? `${mdw(l.start_date)} 全天` : `${mdw(l.start_date)} ～ ${mdw(l.end_date)}`;
   if (l.mode === 'full') return l.start_date === l.end_date ? `${mdw(l.start_date)} 全天` : `${mdw(l.start_date)} ～ ${mdw(l.end_date)}`;
   const d = l.days[0];
   if (l.mode === 'am' || l.mode === 'pm') return `${mdw(l.start_date)} ${l.mode_text}${d ? ` ${d.from}～${d.to}` : ''}`;
@@ -376,15 +398,15 @@ async function loadPending() {
     $('pendList').innerHTML = r.leaves.map((l) => `<article class="card pend-card">
       <div class="pend-main">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="who">${avatar(l.name, 'md')}<span>${esc(l.name)}<span class="sub" style="font-weight:400">申請於 ${esc(l.created_text)}</span></span></span></div>
-        <div class="pend-facts"><span><span class="badge ${l.deduct_annual ? 'b-accent' : 'b-brand'}">${esc(l.type_name)}</span></span><span>${icon('calendar', 16)}<b>${esc(lvWhen(l))}</b></span><span>${icon('timer', 16)}${esc(l.hours_text)}</span></div>
+        <div class="pend-facts"><span>${typeBadge(l)}</span><span>${icon('calendar', 16)}<b>${esc(lvWhen(l))}</b></span><span>${icon('timer', 16)}${esc(l.hours_text)}</span>${l.destination ? `<span>${icon('navigation', 16)}${esc(l.destination)}</span>` : ''}</div>
         <div class="lv-reason">${esc(l.reason)}</div>
-        <div class="badges">${balInline(l)}${attBtn(l)}</div>
+        <div class="badges">${balInline(l)}${attBtn(l)}${isWork(l) ? `<span class="help" style="margin:0">${icon('info', 14)} 核准後當天打卡免公司網路／位置檢查，但需記錄 GPS；不扣假</span>` : ''}</div>
       </div>
       <div class="pend-actions">
         <button class="btn" data-approve="${l.id}">${icon('check', 18)}核准</button>
         <button class="btn danger-ghost" data-reject="${l.id}">${icon('x', 18)}退回</button>
       </div></article>`).join('')
-      || `<div class="card empty"><span class="empty-ic">${icon('calendarCheck', 24)}</span><b>沒有待審核的請假</b>員工送出申請後會出現在這裡</div>`;
+      || `<div class="card empty"><span class="empty-ic">${icon('calendarCheck', 24)}</span><b>沒有待審核的申請</b>員工送出請假、居家上班或公差申請後會出現在這裡</div>`;
     bindDecide($('pendList'), r.leaves);
   } catch (e) { handle(e); }
 }
@@ -396,23 +418,23 @@ function decideModal(l, kind) {
   const ok = kind === 'approve';
   modal(`<form class="form-grid">
     <div class="summary-box"><span class="who">${avatar(l.name, 'sm')}${esc(l.name)}</span>
-      <div style="margin-top:8px;display:grid;gap:4px"><div><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}</div><div class="muted">${esc(l.hours_text)}・${esc(l.reason)}</div></div></div>
+      <div style="margin-top:8px;display:grid;gap:4px"><div><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}${l.destination ? `・${esc(l.destination)}` : ''}</div><div class="muted">${esc(l.hours_text)}・${esc(l.reason)}</div></div></div>
     ${ok && l.balance ? `<div>${balInline(l)}</div>` : ''}
     <div><label for="dComment">${ok ? '給員工的備註（選填）' : '退回原因（選填，員工看得到）'}</label><input type="text" id="dComment" name="comment" maxlength="300" placeholder="${ok ? '例如：已安排代理人' : '例如：當天人手不足，請改天再請'}"></div>
     ${actions(ok ? '核准' : '退回', !ok)}</form>`,
   async (f) => {
     const r = await api(`/api/admin/leaves/${l.id}/${kind}`, { method: 'POST', body: formData(f) });
-    toast(ok ? `已核准 ${l.name} 的${l.type_name}${r.balance ? `，特休剩餘 ${r.balance.remaining_hours} 小時` : ''}` : `已退回 ${l.name} 的${l.type_name}申請`, 'ok');
+    toast(ok ? `已核准 ${l.name} 的${l.type_name}${isWork(l) ? '，當天打卡改為記錄 GPS' : ''}${r.balance ? `，特休剩餘 ${r.balance.remaining_hours} 小時` : ''}` : `已退回 ${l.name} 的${l.type_name}申請`, 'ok');
     refreshLeaveViews();
-  }, { title: ok ? '核准請假' : '退回請假', icon: ok ? 'calendarCheck' : 'calendarX', danger: !ok });
+  }, { title: `${ok ? '核准' : '退回'}${isWork(l) ? l.type_name : '請假'}`, icon: ok ? 'calendarCheck' : 'calendarX', danger: !ok });
 }
 function revokeModal(l) {
   modal(`<form class="form-grid">
     <div class="summary-box"><span class="who">${avatar(l.name, 'sm')}${esc(l.name)}</span>
       <div style="margin-top:8px"><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}・${esc(l.hours_text)}</div></div>
-    <p style="margin:0">撤銷後這筆請假會改為「已取消」${l.deduct_annual ? '，特休時數會退回給員工' : ''}；員工會看到撤銷原因。</p>
+    <p style="margin:0">撤銷後這筆${isWork(l) ? l.type_name : '請假'}會改為「已取消」${l.deduct_annual ? '，特休時數會退回給員工' : ''}${isWork(l) ? '，當天打卡恢復公司網路／位置檢查' : ''}；員工會看到撤銷原因。</p>
     <div><label for="rvComment">撤銷原因（必填）</label><input type="text" id="rvComment" name="comment" maxlength="300" required placeholder="例如：員工表示當天會正常上班"></div>
-    ${actions('撤銷請假', true)}</form>`,
+    ${actions(isWork(l) ? '撤銷' : '撤銷請假', true)}</form>`,
   async (f) => {
     const r = await api(`/api/admin/leaves/${l.id}/revoke`, { method: 'POST', body: formData(f) });
     toast(`已撤銷 ${l.name} 的${l.type_name}${r.balance ? `，特休剩餘 ${r.balance.remaining_hours} 小時` : ''}`, 'ok'); refreshLeaveViews();
@@ -428,14 +450,14 @@ async function loadLeaveList() {
     const r = await api('/api/admin/leaves?' + q);
     $('lvBody').innerHTML = r.leaves.map((l) => `<tr>
       <td><span class="who">${avatar(l.name, 'sm')}${esc(l.name)}</span></td>
-      <td><span class="badge ${l.deduct_annual ? 'b-accent' : 'b-brand'}">${esc(l.type_name)}</span></td>
+      <td>${typeBadge(l)}${l.destination ? `<span class="sub">${esc(l.destination)}</span>` : ''}</td>
       <td class="num">${esc(lvWhen(l))}<span class="sub">申請於 ${esc(l.created_text)}</span></td>
-      <td class="num"><b>${l.hours}</b> 小時</td>
+      <td class="num">${isWork(l) ? `<span class="muted">${l.days.length} 天・不扣假</span>` : `<b>${l.hours}</b> 小時`}</td>
       <td class="wrap" style="min-width:120px">${esc(l.reason)}</td>
       <td>${lvStatus(l)}${l.decided_text ? `<span class="sub">${esc(l.decided_text)}</span>` : ''}</td>
       <td class="wrap" style="min-width:120px">${l.admin_comment ? esc(l.admin_comment) : '<span class="muted">—</span>'}</td>
       <td><div class="cell-actions">${attBtn(l, false)}${l.status === 'approved' ? `<button class="btn secondary sm icon-only" data-revoke="${l.id}" title="撤銷" aria-label="撤銷 ${esc(l.name)} 的${esc(l.type_name)}">${icon('undo', 16)}</button>` : ''}${l.status === 'pending' ? `<button class="btn sm icon-only" data-approve="${l.id}" title="核准" aria-label="核准 ${esc(l.name)} 的${esc(l.type_name)}">${icon('check', 16)}</button><button class="btn danger-ghost sm icon-only" data-reject="${l.id}" title="退回" aria-label="退回 ${esc(l.name)} 的${esc(l.type_name)}">${icon('x', 16)}</button>` : ''}</div></td></tr>`).join('')
-      || emptyRow(8, '沒有符合條件的請假', '試著調整日期、員工或狀態', 'calendar');
+      || emptyRow(8, '沒有符合條件的申請', '試著調整日期、員工或狀態', 'calendar');
     bindDecide($('lvBody'), r.leaves);
     $('lvBody').querySelectorAll('[data-revoke]').forEach((b) => b.onclick = () => revokeModal(r.leaves.find((l) => l.id == b.dataset.revoke)));
   } catch (e) { handle(e); }
@@ -464,7 +486,7 @@ async function loadCal() {
       const evs = byDay[d] || [];
       const cls = ['cal-day', wd === 0 || wd === 6 ? 'wknd' : '', d.slice(0, 7) !== calMonth ? 'out' : '', d === today ? 'today' : ''].join(' ');
       html += `<div class="${cls}"><div class="cal-n"><b>${Number(d.slice(8))}</b>${evs.length > 1 ? `<span class="muted" style="font-size:11px;font-weight:500">${evs.length} 人</span>` : ''}</div>
-        ${evs.slice(0, 3).map(({ l, d: dd }) => `<button type="button" class="cal-ev ${l.status} ${l.deduct_annual ? 'annual' : ''}" data-ev="${l.id}" title="${esc(`${l.name} ${l.type_name} ${dd.from}～${dd.to}（${l.status_text}）`)}">${esc(l.name.replace('示範員工', ''))} ${esc(l.type_name)}${dd.full ? '' : l.mode === 'am' ? ' 上午' : l.mode === 'pm' ? ' 下午' : ` ${dd.from}`}</button>`).join('')}
+        ${evs.slice(0, 3).map(({ l, d: dd }) => `<button type="button" class="cal-ev ${l.status} ${isWork(l) ? l.kind : l.deduct_annual ? 'annual' : ''}" data-ev="${l.id}" title="${esc(`${l.name} ${l.type_name}${l.destination ? `（${l.destination}）` : ''} ${isWork(l) ? '全天' : `${dd.from}～${dd.to}`}（${l.status_text}）`)}">${isWork(l) ? icon(KIND_IC[l.kind], 12) : ''}${esc(l.name.replace('示範員工', ''))} ${esc(isWork(l) ? (l.kind === 'wfh' ? '居家' : '公差') : l.type_name)}${dd.full ? '' : l.mode === 'am' ? ' 上午' : l.mode === 'pm' ? ' 下午' : ` ${dd.from}`}</button>`).join('')}
         ${evs.length > 3 ? `<span class="cal-more">還有 ${evs.length - 3} 筆</span>` : ''}</div>`;
     }
     $('calGrid').innerHTML = html;
@@ -474,13 +496,13 @@ async function loadCal() {
 function leaveDetail(l) {
   modal(`<form class="form-grid">
     <div class="summary-box"><span class="who">${avatar(l.name, 'sm')}${esc(l.name)}</span>
-      <div style="margin-top:8px;display:grid;gap:6px"><div><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}</div><div class="muted">${esc(l.hours_text)}</div><div>${esc(l.reason)}</div>
+      <div style="margin-top:8px;display:grid;gap:6px"><div><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}</div><div class="muted">${esc(l.hours_text)}${l.destination ? `・地點：${esc(l.destination)}` : ''}</div><div>${esc(l.reason)}</div>
       <div class="badges">${lvStatus(l)}${balInline(l)}${attBtn(l)}</div>
       ${l.admin_comment ? `<div class="muted">審核意見：${esc(l.admin_comment)}</div>` : ''}</div></div>
     <div class="actions">${l.status === 'pending'
       ? `<button type="button" class="btn secondary" data-cancel>關閉</button><button type="button" class="btn danger-ghost" data-d="reject">${icon('x', 16)}退回</button><button type="submit" class="btn">${icon('check', 16)}核准</button>`
       : `<button type="button" class="btn secondary" data-cancel>關閉</button><button type="submit" class="btn hidden">關閉</button>`}</div></form>`,
-  async () => { if (l.status === 'pending') setTimeout(() => decideModal(l, 'approve'), 0); }, { title: '請假內容', icon: 'calendar' });
+  async () => { if (l.status === 'pending') setTimeout(() => decideModal(l, 'approve'), 0); }, { title: isWork(l) ? `${l.type_name}申請` : '請假內容', icon: isWork(l) ? KIND_IC[l.kind] : 'calendar' });
   const rj = $('modal').querySelector('[data-d=reject]'); if (rj) rj.onclick = () => { closeModal(); decideModal(l, 'reject'); };
 }
 $('calPrev').onclick = () => { const [y, m] = calMonth.split('-').map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); calMonth = d.toISOString().slice(0, 7); loadCal(); };
@@ -506,7 +528,10 @@ async function loadSetup() {
         <td><div class="cell-actions"><button class="btn secondary sm" data-bal="${b.id}">${icon('pencil', 15)}調整</button></div></td></tr>`;
     }).join('') || emptyRow(8, '尚無員工', '請先到「員工管理」新增員工', 'users');
     $('balBody').querySelectorAll('[data-bal]').forEach((btn) => btn.onclick = () => balModal(bals.find((b) => b.id == btn.dataset.bal)));
-    $('typeBody').innerHTML = types.map((t) => `<tr class="type-row"><td><b>${esc(t.name)}</b></td>
+    $('typeBody').innerHTML = types.map((t) => t.kind && t.kind !== 'leave' ? `<tr class="type-row"><td><b>${icon(KIND_IC[t.kind], 15)} ${esc(t.name)}</b><span class="sub">系統內建・不算請假、不扣時數</span></td>
+      <td><span class="muted">—</span></td><td><span class="muted">—</span></td>
+      <td>${t.active ? '<span class="badge b-success"><span class="dot"></span>啟用中</span>' : '<span class="badge b-neutral">已停用</span>'}</td>
+      <td><div class="cell-actions"><button class="btn ${t.active ? 'danger-ghost' : 'soft'} sm" data-ttoggle="${t.id}">${t.active ? `${icon('ban', 15)}停用` : `${icon('check', 15)}啟用`}</button></div></td></tr>` : `<tr class="type-row"><td><b>${esc(t.name)}</b></td>
       <td>${t.deduct_annual ? `<span class="badge b-accent">${icon('palm')}扣特休</span>` : '<span class="muted">—</span>'}</td>
       <td>${t.needs_attachment ? `<span class="badge b-info">${icon('paperclip')}建議附證明</span>` : '<span class="muted">—</span>'}</td>
       <td>${t.active ? '<span class="badge b-success"><span class="dot"></span>啟用中</span>' : '<span class="badge b-neutral">已停用</span>'}</td>

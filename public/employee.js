@@ -79,22 +79,35 @@ $('keypad').onclick = async (e) => {
 };
 
 // ---------- 打卡條件 ----------
+const KIND_IC = { wfh: 'home', trip: 'briefcase' };
 function renderChecks() {
   const c = me.checks || {};
   const pills = [];
+  if (c.arrangement) {
+    // 已核准居家上班／公差：不需公司 WiFi，改為記錄 GPS
+    const a = c.arrangement;
+    pills.push(`<span class="pill ${a.kind}">${icon(KIND_IC[a.kind])}今天為${esc(a.text)}${a.destination ? `<span class="sub">（${esc(a.destination)}）</span>` : ''}，打卡將記錄 GPS 位置</span>`);
+    if (!window.isSecureContext) pills.push(`<span class="pill bad">${icon('pin')}非 HTTPS 連線，無法定位</span>`);
+    $('checkCard').innerHTML = pills.join('');
+    $('checkCard').classList.remove('hidden');
+    return;
+  }
+  if (c.pending_arrangement) pills.push(`<span class="pill neutral">${icon('hourglass')}今天的${esc(c.pending_arrangement.text)}申請審核中<span class="sub">（核准前仍依公司規定打卡）</span></span>`);
   if (c.require_network) pills.push(c.network_ok
     ? `<span class="pill ok">${icon('wifi')}已連上公司網路</span>`
     : `<span class="pill bad">${icon('wifiOff')}目前未連上公司 WiFi<span class="sub">（IP：${esc(c.ip)}）</span></span>`);
   if (c.require_location) pills.push(window.isSecureContext
     ? `<span class="pill neutral">${icon('pin')}打卡時會確認位置</span>`
     : `<span class="pill bad">${icon('pin')}非 HTTPS 連線，無法定位</span>`);
+  if (c.relaxed_out && me.status === 'in' && c.network_ok === false) pills.push(`<span class="pill neutral">${icon('logout')}下班打卡不在公司也可以，會標記為「異地打卡」</span>`);
   $('checkCard').innerHTML = pills.join('');
   $('checkCard').classList.toggle('hidden', !pills.length);
 }
 function showBlocked(reasons) {
   if (!reasons || !reasons.length) { $('blockCard').classList.add('hidden'); return; }
+  const remote = me && me.checks && me.checks.arrangement;
   $('blockCard').innerHTML = `<h4>${icon('ban')}無法打卡</h4><ul>${reasons.map((r) => `<li>${icon(/WiFi|IP/.test(r) ? 'wifiOff' : 'pin', 16)}<span>${esc(r)}</span></li>`).join('')}</ul>
-    <div class="tip">若您確實在公司，請改善上述狀況後再按一次；仍無法打卡請通知管理員補登。</div>`;
+    <div class="tip">${remote ? `${esc(remote.text)}打卡需要定位：請在手機「設定 → 隱私權 → 定位服務」或瀏覽器的網站設定中，允許此網站使用位置，再按一次。` : '若您確實在公司，請改善上述狀況後再按一次；仍無法打卡請通知管理員補登。'}</div>`;
   $('blockCard').classList.remove('hidden');
   // 讓重新渲染時保留動畫
   $('blockCard').style.animation = 'none'; void $('blockCard').offsetWidth; $('blockCard').style.animation = '';
@@ -125,6 +138,10 @@ function busy(text) {
 }
 
 // ---------- 主畫面 ----------
+function workBadges(x) {
+  return (x.work_mode ? `<span class="badge b-${x.work_mode}">${icon(KIND_IC[x.work_mode])}${x.work_mode === 'wfh' ? '居家' : '公差'}</span>` : '')
+    + (x.offsite ? `<span class="badge b-offsite">${icon('mapPinOff')}異地打卡</span>` : '');
+}
 function renderMain() {
   renderChecks();
   renderGreeting();
@@ -138,6 +155,8 @@ function renderMain() {
   else html = `<span class="chip off"><span class="dot"></span>已下班<span class="sub">今日工時 ${s ? s.worked_text : ''}</span></span>`;
   if (s && s.late) html += `<span class="chip late">${icon('alertCircle', 15)}遲到 ${s.late_min} 分鐘</span>`;
   if (s && s.leave_text) html += `<span class="chip leave">${icon('palm', 15)}今日請假<span class="sub">${esc(s.leave_text)}</span></span>`;
+  const arr = me.checks && me.checks.arrangement;
+  if (arr) html += `<span class="chip ${arr.kind}">${icon(KIND_IC[arr.kind], 15)}${esc(arr.text)}</span>`;
   $('statusLine').innerHTML = html;
 
   $('btnIn').disabled = me.status === 'in';
@@ -149,7 +168,7 @@ function renderMain() {
     <li><span class="tl-dot ${p.type}">${icon(p.type === 'in' ? 'login' : 'logout', 13)}</span>
       <span class="tl-time">${p.time}</span>
       <span class="tl-text">${p.type_text}打卡</span>
-      ${p.edited ? `<span class="badge b-neutral">${icon('pencil')}管理員修改</span>` : '<span class="badge b-success">本人打卡</span>'}</li>`).join('')}</ul>`
+      ${p.edited ? `<span class="badge b-neutral">${icon('pencil')}管理員修改</span>` : '<span class="badge b-success">本人打卡</span>'}${workBadges(p)}</li>`).join('')}</ul>`
     : `<div class="empty" style="padding:22px 8px"><span class="empty-ic">${icon('clock', 24)}</span>今天還沒有打卡紀錄</div>`;
 
   const std = (me.settings && me.settings.standard_hours) || 8;
@@ -170,6 +189,7 @@ function renderMain() {
       ...r.issues.map((i) => `<span class="badge b-warning">${icon('alert')}${esc(i)}</span>`),
       r.working_now ? '<span class="badge b-success"><span class="dot"></span>上班中</span>' : '',
       r.leave_text ? `<span class="badge b-accent">${icon('palm')}${esc(r.leave_text)}</span>` : '',
+      workBadges(r),
     ].join('');
     return `<div class="day">
       <div class="day-date"><span class="md">${Number(m)}/${Number(d)}</span><span class="wd">週${r.weekday}</span></div>
@@ -190,7 +210,8 @@ function askConfirm(type) {
     $('confirmIc').className = 's-ic ' + type; $('confirmIc').innerHTML = icon(isIn ? 'login' : 'logout', 28);
     $('confirmTitle').textContent = isIn ? '確認上班打卡' : '確認下班打卡';
     $('confirmTime').textContent = fmtClock(nowMs()).slice(0, 5);
-    $('confirmNote').textContent = me.checks && me.checks.require_location ? '按下確認後會取得您的位置' : fmtLongDate(nowMs());
+    const c = me.checks || {};
+    $('confirmNote').textContent = c.arrangement ? `今天為${c.arrangement.text}，按下確認後會記錄您的 GPS 位置` : c.location_for && c.location_for[type] ? '按下確認後會取得您的位置' : fmtLongDate(nowMs());
     $('confirmOk').className = 'btn ' + (isIn ? '' : 'go-out');
     $('confirmSheet').classList.remove('hidden');
     $('confirmOk').focus();
@@ -234,6 +255,8 @@ function celebrate(type, message) {
   if (isIn && s && s.late) badges.push(`<span class="badge b-danger">${icon('alertCircle')}遲到 ${s.late_min} 分鐘</span>`);
   if (isIn && s && !s.late) badges.push(`<span class="badge b-success">${icon('check')}準時</span>`);
   if (!isIn && s) badges.push(`<span class="badge b-brand">${icon('timer')}今日工時 ${s.worked_text}</span>`);
+  if (celebrate.extra && celebrate.extra.offsite) badges.push(`<span class="badge b-offsite">${icon('mapPinOff')}已記錄為異地打卡</span>`);
+  if (celebrate.extra && celebrate.extra.work_mode) badges.push(`<span class="badge b-${celebrate.extra.work_mode}">${icon(KIND_IC[celebrate.extra.work_mode])}${celebrate.extra.work_mode === 'wfh' ? '居家上班' : '公差'}・已記錄 GPS</span>`);
   $('successOverlay').innerHTML = `<div class="success-card ${type}">
     <svg class="ring" viewBox="0 0 104 104" aria-hidden="true"><circle class="bgc" cx="52" cy="52" r="48"/><circle cx="52" cy="52" r="48"/><path d="M34 53 l12 12 l24 -26"/></svg>
     <h3>${isIn ? '上班打卡成功' : '下班打卡成功'}</h3>
@@ -261,14 +284,15 @@ async function punch(type) {
   showBlocked(null);
   try {
     const body = { type };
-    if (me.checks && me.checks.require_location) {
-      busy('正在確認您的位置…');
+    const c = me.checks || {};
+    if (c.location_for ? c.location_for[type] : c.require_location) {
+      busy(c.arrangement ? '正在記錄您的 GPS 位置…' : '正在確認您的位置…');
       Object.assign(body, await getLocation());
       busy(null);
-      if (body.loc_error) toast(GEO_MSG[body.loc_error], 'err');
+      if (body.loc_error && (!c.location_required || c.location_required[type])) toast(GEO_MSG[body.loc_error], 'err');
     }
     const r = await api('/api/punch', { method: 'POST', headers: auth(), body });
-    me = r; renderMain(); celebrate(type, r.message);
+    me = r; renderMain(); celebrate.extra = { offsite: r.offsite, work_mode: r.work_mode }; celebrate(type, r.message);
     if (navigator.vibrate) navigator.vibrate([30, 40, 60]);
   } catch (e) {
     busy(null);
@@ -312,6 +336,7 @@ async function loadLeave() {
   catch (e) { if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); } toast(e.message, 'err'); }
 }
 function whenText(l) {
+  if (l.kind && l.kind !== 'leave') return l.start_date === l.end_date ? `${mdw(l.start_date)} 全天` : `${mdw(l.start_date)} ～ ${mdw(l.end_date)}`;
   if (l.mode === 'full') return l.start_date === l.end_date ? `${mdw(l.start_date)} 全天` : `${mdw(l.start_date)} ～ ${mdw(l.end_date)} 全天`;
   if (l.mode === 'am' || l.mode === 'pm') { const d = l.days[0]; return `${mdw(l.start_date)} ${l.mode_text}${d ? `（${d.from}～${d.to}）` : ''}`; }
   const st = l.start_text.slice(11), et = l.end_text.slice(11);
@@ -333,12 +358,14 @@ function renderLeave() {
   $('leaveHint').textContent = lv.requests.length ? `共 ${lv.requests.length} 筆` : '';
   $('leaveList').innerHTML = lv.requests.length ? lv.requests.map((l) => {
     const [bc, bi] = STATUS_BADGE[l.status];
+    const work = l.kind && l.kind !== 'leave';
     return `<article class="card leave-item ${l.status}">
       <div class="lv-head">
-        <span class="lv-ic ${l.deduct_annual ? 'annual' : ''}">${icon(l.deduct_annual ? 'palm' : 'calendar', 20)}</span>
+        <span class="lv-ic ${work ? l.kind : l.deduct_annual ? 'annual' : ''}">${icon(work ? KIND_IC[l.kind] : l.deduct_annual ? 'palm' : 'calendar', 20)}</span>
         <div style="min-width:0"><div class="lv-title">${esc(l.type_name)} <span class="muted">· ${esc(l.hours_text)}</span></div><div class="lv-when">${esc(whenText(l))}</div></div>
         <span class="badge ${bc}">${icon(bi)}${l.status_text}</span>
       </div>
+      ${l.destination ? `<div class="lv-dest">${icon('navigation', 14)}${esc(l.destination)}</div>` : ''}
       <div class="lv-reason">${esc(l.reason)}</div>
       ${l.admin_comment ? `<div class="lv-comment ${l.status === 'rejected' ? 'rej' : ''}">${icon('message', 16)}<span><b>管理員：</b>${esc(l.admin_comment)}</span></div>` : ''}
       <div class="lv-foot"><span class="meta">申請於 ${esc(l.created_text)}</span><span class="grow"></span>
@@ -346,15 +373,15 @@ function renderLeave() {
         ${l.status === 'pending' ? `<button class="btn danger-ghost sm" data-cancel="${l.id}">${icon('undo', 16)}取消申請</button>` : ''}
       </div>
     </article>`;
-  }).join('') : `<div class="card empty"><span class="empty-ic">${icon('calendar', 24)}</span><b>還沒有請假紀錄</b>按上方「申請請假」即可送出申請</div>`;
+  }).join('') : `<div class="card empty"><span class="empty-ic">${icon('calendar', 24)}</span><b>還沒有申請紀錄</b>按上方按鈕即可申請請假、居家上班或公差</div>`;
   $('leaveList').querySelectorAll('[data-cancel]').forEach((btn) => btn.onclick = () => cancelLeave(Number(btn.dataset.cancel)));
   $('leaveList').querySelectorAll('[data-att]').forEach((btn) => btn.onclick = () => openAttachment(Number(btn.dataset.att)));
 }
 async function cancelLeave(id) {
   const l = lv.requests.find((x) => x.id === id);
-  const ok = await askSheet({ ic: 'undo', tone: 'danger', title: '取消這筆請假申請？', big: `${l.type_name} · ${l.hours_text}`, note: whenText(l), ok: '確定取消', okCls: 'go-danger' });
+  const ok = await askSheet({ ic: 'undo', tone: 'danger', title: `取消這筆${l.kind && l.kind !== 'leave' ? l.type_name : '請假'}申請？`, big: `${l.type_name} · ${l.hours_text}`, note: whenText(l), ok: '確定取消', okCls: 'go-danger' });
   if (!ok) return;
-  try { await api(`/api/leaves/${id}/cancel`, { method: 'POST', headers: auth() }); toast('已取消請假申請', 'ok'); loadLeave(); }
+  try { await api(`/api/leaves/${id}/cancel`, { method: 'POST', headers: auth() }); toast('已取消申請', 'ok'); loadLeave(); }
   catch (e) { toast(e.message, 'err'); loadLeave(); }
 }
 async function openAttachment(id) {
@@ -369,14 +396,44 @@ async function openAttachment(id) {
 
 // ---- 申請表單 ----
 function nextWorkday() { let d = taipeiToday(); do { d = addDays(d, 1); } while ([0, 6].includes(new Date(d + 'T00:00:00Z').getUTCDay())); return d; }
+function curKind() { return (document.querySelector('input[name=lfKind]:checked') || {}).value || 'leave'; }
+function workType(kind) { return (lv.work_types || []).find((t) => t.kind === kind); }
 function formVal() {
+  const kind = curKind();
+  if (kind !== 'leave') {
+    const t = workType(kind);
+    return { kind, type_id: t ? t.id : 0, mode: 'full', start_date: $('lfStart').value, end_date: $('lfEnd').value || $('lfStart').value, reason: $('lfReason').value.trim(), destination: kind === 'trip' ? $('lfDest').value.trim() : '' };
+  }
   const mode = (document.querySelector('input[name=lfMode]:checked') || {}).value;
-  return { type_id: Number((document.querySelector('input[name=lfType]:checked') || {}).value || 0), mode, start_date: $('lfStart').value,
+  return { kind, type_id: Number((document.querySelector('input[name=lfType]:checked') || {}).value || 0), mode, start_date: $('lfStart').value,
     end_date: mode === 'full' ? ($('lfEnd').value || $('lfStart').value) : '', start_time: $('lfStartT').value, end_time: $('lfEndT').value, reason: $('lfReason').value.trim() };
 }
 function selectedType() { const id = formVal().type_id; return lv.types.find((t) => t.id === id); }
+const KIND_FORM = {
+  leave: { title: '申請請假', ic: 'calendarPlus', reason: '請假原因', ph: '例如：家庭旅遊、身體不適就醫' },
+  wfh: { title: '申請居家上班', ic: 'home', reason: '事由', ph: '例如：家中有事需在家，遠端處理報表與客戶信件' },
+  trip: { title: '申請公差', ic: 'briefcase', reason: '公差事由', ph: '例如：拜訪客戶、參加展覽、外出送貨' },
+};
 function syncForm() {
   const f = formVal();
+  const kf = KIND_FORM[f.kind];
+  $('leaveSheetTitle').textContent = kf.title;
+  $('leaveSheet').querySelector('.fs-head .s-ic').className = `s-ic ${f.kind}`;
+  $('leaveSheet').querySelector('.fs-head .s-ic').innerHTML = icon(kf.ic, 22);
+  $('lfReasonLabel').textContent = kf.reason; $('lfReason').placeholder = kf.ph;
+  const work = f.kind !== 'leave';
+  $('lfTypeField').classList.toggle('hidden', work); $('lfModeField').classList.toggle('hidden', work); $('lfAttField').classList.toggle('hidden', work);
+  $('lfDestField').classList.toggle('hidden', f.kind !== 'trip');
+  if (work) {
+    $('leaveWorkHint').textContent = '不扣假，算正常出勤；核准後當天打卡免連公司 WiFi，但需開啟定位（GPS）';
+    $('lfEndWrap').classList.remove('hidden'); $('lfTimes').classList.add('hidden'); $('lfDates').classList.add('row2');
+    $('lfStartLabel').textContent = '開始日期';
+    if ($('lfEnd').value && $('lfEnd').value < $('lfStart').value) $('lfEnd').value = $('lfStart').value;
+    $('lfEnd').min = $('lfStart').value;
+    $('lfTypeHint').classList.add('hidden');
+    return preview();
+  }
+  const w = lv.work; $('leaveWorkHint').textContent = `上班 ${w.work_start}～${w.work_end}${w.lunch_enabled ? `，午休 ${w.lunch_start}～${w.lunch_end}` : ''}`;
   $('lfEndWrap').classList.toggle('hidden', f.mode !== 'full');
   $('lfTimes').classList.toggle('hidden', f.mode !== 'hours');
   $('lfDates').classList.toggle('row2', f.mode === 'full');
@@ -393,6 +450,19 @@ function preview() { clearTimeout(pvTimer); pvTimer = setTimeout(doPreview, 180)
 async function doPreview() {
   const f = formVal(); const seq = ++previewSeq; const box = $('lfPreview');
   previewOk = false;
+  if (f.kind !== 'leave') {
+    if (!f.start_date) { box.className = 'preview-box'; box.innerHTML = `<div class="muted">${icon('calendar', 16)} 選好日期後會顯示天數</div>`; return; }
+    try {
+      const r = await api('/api/leaves/preview', { method: 'POST', headers: auth(), body: f });
+      if (seq !== previewSeq) return;
+      previewOk = true;
+      box.className = `preview-box ${f.kind}`;
+      box.innerHTML = `<div class="pv-total">${icon(KIND_IC[f.kind], 18)}${f.kind === 'wfh' ? '居家上班' : '公差'} ${r.days_count} 天</div>
+        <div class="pv-days"><div><span>${esc(r.days.length > 1 ? `${mdw(r.days[0].date)} ～ ${mdw(r.days[r.days.length - 1].date)}` : mdw(r.days[0].date))}</span><span>不扣假</span></div></div>
+        <div class="pv-bal">${icon('pin', 14)} 核准後，這些日子打卡不需公司 WiFi，但必須允許定位（記錄 GPS）</div>`;
+    } catch (e) { if (seq !== previewSeq) return; box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}${esc(e.message)}</div>`; }
+    return;
+  }
   if (!f.mode || !f.start_date || (f.mode === 'hours' && (!f.start_time || !f.end_time))) { box.className = 'preview-box'; box.innerHTML = `<div class="muted">${icon('timer', 16)} 選好日期後會自動計算時數</div>`; return; }
   try {
     const r = await api('/api/leaves/preview', { method: 'POST', headers: auth(), body: f });
@@ -412,23 +482,27 @@ async function doPreview() {
       ${bal}`;
   } catch (e) { if (seq !== previewSeq) return; box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}${esc(e.message)}</div>`; }
 }
-function openLeaveForm() {
+function openLeaveForm(kind = 'leave') {
   if (!lv) return;
   const w = lv.work;
-  $('leaveWorkHint').textContent = `上班 ${w.work_start}～${w.work_end}${w.lunch_enabled ? `，午休 ${w.lunch_start}～${w.lunch_end}` : ''}`;
+  openLeaveForm.from = kind === 'leave' ? 'newLeave' : 'newWork';
+  const kinds = [['leave', '請假', 'palm'], ...(lv.work_types || []).map((t) => [t.kind, t.name, KIND_IC[t.kind]])];
+  if (!kinds.some((k) => k[0] === kind)) kind = 'leave';
+  $('lfKinds').innerHTML = kinds.map(([v, t, ic]) => `<label class="opt kind-${v}"><input type="radio" name="lfKind" value="${v}" ${v === kind ? 'checked' : ''}><span>${icon(ic, 18)}${esc(t)}</span></label>`).join('');
+  $('lfDest').value = '';
   $('lfTypes').innerHTML = lv.types.map((t, i) => `<label class="opt"><input type="radio" name="lfType" value="${t.id}" ${i === 0 ? 'checked' : ''}><span>${esc(t.name)}</span></label>`).join('');
   $('lfModes').innerHTML = [['full', '全天', ''], ['am', '上午', w.am], ['pm', '下午', w.pm], ['hours', '指定時間', '']]
     .map(([v, t, sub], i) => `<label class="opt"><input type="radio" name="lfMode" value="${v}" ${i === 0 ? 'checked' : ''}><span>${t}${sub ? `<small>${sub}</small>` : ''}</span></label>`).join('');
-  const d = nextWorkday();
+  const d = kind === 'leave' ? nextWorkday() : taipeiToday();
   $('lfStart').value = d; $('lfEnd').value = d; $('lfStart').min = addDays(taipeiToday(), -60);
   $('lfStartT').value = w.work_start; $('lfEndT').value = w.lunch_enabled ? w.lunch_start : w.work_end;
   $('lfReason').value = ''; clearFile();
   $('leaveSheet').classList.remove('hidden');
   $('leaveForm').scrollTop = 0;
   syncForm();
-  setTimeout(() => { const c = document.querySelector('input[name=lfType]:checked'); if (c) c.focus(); }, 50);
+  setTimeout(() => { const c = document.querySelector('input[name=lfKind]:checked'); if (c) c.focus(); }, 50);
 }
-function closeLeaveForm() { $('leaveSheet').classList.add('hidden'); $('newLeave').focus(); }
+function closeLeaveForm() { $('leaveSheet').classList.add('hidden'); $(openLeaveForm.from || 'newLeave').focus(); }
 function clearFile() { lfFile = null; $('lfFile').value = ''; $('lfFileChosen').classList.add('hidden'); $('lfFilePick').classList.remove('hidden'); }
 $('lfFile').onchange = () => {
   const f = $('lfFile').files[0]; if (!f) return clearFile();
@@ -438,7 +512,8 @@ $('lfFile').onchange = () => {
   $('lfFileChosen').classList.remove('hidden'); $('lfFilePick').classList.add('hidden');
 };
 $('lfFileClear').onclick = clearFile;
-$('newLeave').onclick = openLeaveForm;
+$('newLeave').onclick = () => openLeaveForm('leave');
+$('newWork').onclick = () => openLeaveForm('wfh');
 $('lfCancel').onclick = closeLeaveForm;
 $('leaveSheet').onclick = (e) => { if (e.target === $('leaveSheet')) closeLeaveForm(); };
 $('leaveForm').addEventListener('change', syncForm);
@@ -447,11 +522,11 @@ const readFile = (f) => new Promise((res, rej) => { const r = new FileReader(); 
 $('leaveForm').onsubmit = async (e) => {
   e.preventDefault();
   const f = formVal();
-  if (!f.type_id) return toast('請選擇假別', 'err');
-  if (!f.reason) { $('lfReason').focus(); return toast('請填寫請假原因', 'err'); }
+  if (!f.type_id) return toast(f.kind === 'leave' ? '請選擇假別' : '目前未開放此申請類型', 'err');
+  if (!f.reason) { $('lfReason').focus(); return toast(`請填寫${KIND_FORM[f.kind].reason}`, 'err'); }
   const btn = $('lfSubmit'); btn.disabled = true;
   try {
-    if (lfFile) f.attachment = { name: lfFile.name, data: await readFile(lfFile) };
+    if (lfFile && f.kind === 'leave') f.attachment = { name: lfFile.name, data: await readFile(lfFile) };
     const r = await api('/api/leaves', { method: 'POST', headers: auth(), body: f });
     closeLeaveForm(); toast(r.message, 'ok'); await loadLeave();
   } catch (err) { toast(err.message, 'err'); }

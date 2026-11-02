@@ -111,6 +111,7 @@
         <div class="card stat tone-danger"><span class="s-ic"><i data-icon="alertCircle"></i></span><div class="n" id="tLate">0</div><div class="l">遲到次數</div></div>
         <div class="card stat tone-warning"><span class="s-ic"><i data-icon="alert"></i></span><div class="n" id="tIssue">0</div><div class="l">異常（缺卡）</div></div>
         <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="tLeave">0</div><div class="l">請假（小時）</div></div>
+        <div class="card stat tone-danger"><span class="s-ic"><i data-icon="mapPinOff"></i></span><div class="n" id="tOffsite">0</div><div class="l">異地打卡（次）</div></div>
       </div>
       <div class="tabs" role="tablist">
         <button class="on" data-tab="daily"><i data-icon="calendar" data-size="16"></i>每日工時</button>
@@ -125,7 +126,7 @@
 
     <!-- 請假 -->
     <section data-sec="leave" class="hidden">
-      <div class="page-head"><div><h1>請假管理</h1><p>審核員工請假、查看誰請假，並設定假別與特休額度</p></div></div>
+      <div class="page-head"><div><h1>請假管理</h1><p>審核員工的請假、居家上班與公差申請，查看行事曆，並設定假別與特休額度</p></div></div>
       <div class="tabs" role="tablist" aria-label="請假分頁">
         <button class="on" data-ltab="pending" role="tab"><i data-icon="hourglass" data-size="16"></i>待審核 <span class="count" id="lvPendTab"></span></button>
         <button data-ltab="list" role="tab"><i data-icon="list" data-size="16"></i>全部紀錄</button>
@@ -160,7 +161,7 @@
             <label class="switch-row" for="calPend" style="min-height:36px"><input type="checkbox" class="switch" id="calPend" checked><span class="d" style="font-size:14px;color:var(--text-2)">顯示待審核</span></label>
           </div>
           <div class="cal" id="calGrid"></div>
-          <div class="cal-legend"><span><i style="background:var(--accent-soft)"></i>特休（已核准）</span><span><i style="background:var(--brand-soft);border:1px solid var(--brand-soft-2)"></i>其他假別（已核准）</span><span><i style="background:var(--warning-bg);border:1px dashed var(--warning-line)"></i>待審核</span><span class="muted">週六、週日以灰底顯示，不計請假時數</span></div>
+          <div class="cal-legend"><span><i style="background:var(--accent-soft)"></i>特休（已核准）</span><span><i style="background:var(--brand-soft);border:1px solid var(--brand-soft-2)"></i>其他假別（已核准）</span><span><i style="background:var(--wfh-bg);border:1px solid var(--wfh-line)"></i>居家上班</span><span><i style="background:var(--info-bg);border:1px solid var(--info-line)"></i>公差</span><span><i style="background:var(--warning-bg);border:1px dashed var(--warning-line)"></i>待審核</span><span class="muted">週六、週日以灰底顯示，不計請假時數</span></div>
         </div>
       </div>
 
@@ -239,6 +240,19 @@
                   <div class="row2">
                     <div><label for="cRadius">允許範圍（公尺）</label><input type="number" id="cRadius" min="20" max="5000"></div>
                     <div><label for="cAcc">定位誤差上限（公尺）</label><input type="number" id="cAcc" min="10" max="2000"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="check-block is-on out-rule">
+                <div class="switch-row" style="cursor:default"><span><span class="t">下班打卡規則</span><br><span class="d">上班打卡一律依照上面的限制；下班可以放寬，避免員工外出後回不來而無法打卡</span></span></div>
+                <div class="cb-body">
+                  <div class="opt-grid" role="radiogroup" aria-label="下班打卡規則">
+                    <label class="opt"><input type="radio" name="outRule" value="relaxed" id="outRelaxed"><span>放寬（預設）<small>公司網路或公司附近即可；都不符合仍可打卡，標記「異地打卡」</small></span></label>
+                    <label class="opt"><input type="radio" name="outRule" value="strict" id="outStrict"><span>嚴格（同上班）<small>不符合限制就不能打下班卡</small></span></label>
+                  </div>
+                  <div class="row2">
+                    <div><label for="cOutRadius">放寬時的公司附近範圍（公尺）</label><input type="number" id="cOutRadius" min="20" max="5000"></div>
+                    <div class="help" style="align-self:end;margin:0 0 10px">已核准「居家上班」「公差」的日子，上下班都不檢查公司網路與位置，但必須記錄 GPS。</div>
                   </div>
                 </div>
               </div>

@@ -70,8 +70,11 @@
     <!-- 請假 -->
     <div id="leavePane" class="hidden" role="tabpanel" aria-labelledby="tabLeave">
       <div class="card bal-card" id="balCard"></div>
-      <button class="btn block" id="newLeave" style="margin-top:12px;min-height:52px;font-size:var(--fs-md);border-radius:16px"><i data-icon="calendarPlus" data-size="20"></i>申請請假</button>
-      <div class="section-title">我的請假<span class="muted" id="leaveHint"></span></div>
+      <div class="apply-btns">
+        <button class="btn" id="newLeave"><i data-icon="calendarPlus" data-size="20"></i>申請請假</button>
+        <button class="btn secondary" id="newWork"><i data-icon="home" data-size="20"></i>居家上班／公差</button>
+      </div>
+      <div class="section-title">我的申請<span class="muted" id="leaveHint"></span></div>
       <div class="leave-list" id="leaveList"></div>
     </div>
   </section>
@@ -98,11 +101,15 @@
     <div class="grab"></div>
     <div class="fs-head"><span class="s-ic"><i data-icon="calendarPlus" data-size="22"></i></span><div><h3 id="leaveSheetTitle">申請請假</h3><p id="leaveWorkHint"></p></div></div>
     <div class="fs-field">
+      <span class="label" id="lfKindLabel">申請類型</span>
+      <div class="opt-grid kinds" id="lfKinds" role="radiogroup" aria-labelledby="lfKindLabel"></div>
+    </div>
+    <div class="fs-field" id="lfTypeField">
       <span class="label" id="lfTypeLabel">假別</span>
       <div class="opt-grid" id="lfTypes" role="radiogroup" aria-labelledby="lfTypeLabel"></div>
       <p class="help hidden" id="lfTypeHint"></p>
     </div>
-    <div class="fs-field">
+    <div class="fs-field" id="lfModeField">
       <span class="label" id="lfModeLabel">請假時段</span>
       <div class="opt-grid modes" id="lfModes" role="radiogroup" aria-labelledby="lfModeLabel"></div>
     </div>
@@ -114,12 +121,16 @@
       <div><label for="lfStartT">開始時間</label><input type="time" id="lfStartT" step="900"></div>
       <div><label for="lfEndT">結束時間</label><input type="time" id="lfEndT" step="900"></div>
     </div>
+    <div class="fs-field hidden" id="lfDestField">
+      <label for="lfDest">公差地點<span class="muted" style="font-weight:400">（選填）</span></label>
+      <input type="text" id="lfDest" maxlength="100" placeholder="例如：台中世貿中心、新竹客戶公司">
+    </div>
     <div class="fs-field"><div class="preview-box" id="lfPreview" aria-live="polite"></div></div>
     <div class="fs-field">
-      <label for="lfReason">請假原因</label>
+      <label for="lfReason" id="lfReasonLabel">請假原因</label>
       <textarea id="lfReason" class="plain" maxlength="500" placeholder="例如：家庭旅遊、身體不適就醫" required></textarea>
     </div>
-    <div class="fs-field">
+    <div class="fs-field" id="lfAttField">
       <span class="label">附件<span class="muted" style="font-weight:400">（選填，圖片或 PDF，5MB 以內）</span></span>
       <label class="file-pick" id="lfFilePick"><i data-icon="upload" data-size="20"></i><span>選擇檔案或拍照（例如診斷證明）</span><input type="file" id="lfFile" accept="image/*,application/pdf,.heic,.heif" class="sr-only"></label>
       <div class="file-chosen hidden" id="lfFileChosen"><i data-icon="paperclip" data-size="18"></i><span class="nm" id="lfFileName"></span><button type="button" class="btn ghost sm icon-only" id="lfFileClear" aria-label="移除附件"><i data-icon="x" data-size="18"></i></button></div>
