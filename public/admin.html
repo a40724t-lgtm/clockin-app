@@ -40,8 +40,8 @@
     <a data-page="overview" class="active"><i data-icon="dashboard"></i>今日總覽</a>
     <a data-page="records"><i data-icon="list"></i>打卡紀錄</a>
     <a data-page="leave"><i data-icon="palm"></i>請假<span class="nav-count" id="navLeaveCount" aria-label="待審核請假"></span></a>
+    <a data-page="schedule"><i data-icon="calendar"></i>排班</a>
     <a data-page="payroll"><i data-icon="wallet"></i>薪資統整</a>
-    <a data-page="holidays"><i data-icon="flag"></i>國定假日</a>
     <a data-page="employees"><i data-icon="users"></i>員工管理</a>
     <a data-page="managers"><i data-icon="shield"></i>主管帳號</a>
     <a data-page="settings"><i data-icon="sliders"></i>設定</a>
@@ -114,7 +114,7 @@
         <div class="card stat tone-brand"><span class="s-ic"><i data-icon="calendar"></i></span><div class="n" id="tDays">0</div><div class="l">出勤人日</div></div>
         <div class="card stat tone-info"><span class="s-ic"><i data-icon="timer"></i></span><div class="n" id="tHours">0</div><div class="l">總工時（小時）</div></div>
         <div class="card stat tone-accent"><span class="s-ic"><i data-icon="trend"></i></span><div class="n" id="tOT">0</div><div class="l">加班（小時）</div></div>
-        <div class="card stat tone-danger"><span class="s-ic"><i data-icon="alertCircle"></i></span><div class="n" id="tLate">0</div><div class="l">遲到次數</div></div>
+        <div class="card stat tone-danger"><span class="s-ic"><i data-icon="alertCircle"></i></span><div class="n" id="tLate">0</div><div class="l">遲到／早退次數</div></div>
         <div class="card stat tone-warning"><span class="s-ic"><i data-icon="alert"></i></span><div class="n" id="tIssue">0</div><div class="l">異常（缺卡）</div></div>
         <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="tLeave">0</div><div class="l">請假（小時）</div></div>
         <div class="card stat tone-danger"><span class="s-ic"><i data-icon="mapPinOff"></i></span><div class="n" id="tOffsite">0</div><div class="l">異地打卡（次）</div></div>
@@ -185,9 +185,45 @@
     </section>
 
     <!-- 國定假日 -->
-    <section data-sec="holidays" class="hidden">
-      <div class="page-head"><div><h1>國定假日</h1><p>勞基法國定假日與補假行事曆；請假時數、遲到判斷與薪資試算都會依這裡計算</p></div>
-        <div class="inline-actions"><button class="btn" id="holAdd"><i data-icon="plus" data-size="18"></i>新增公司自訂假日</button></div></div>
+    <section data-sec="schedule" class="hidden">
+      <div class="page-head"><div><h1>排班</h1><p id="schHead">安排每週班表，發布後員工才看得到；打卡紀錄會依班表判斷遲到與早退</p></div></div>
+      <div class="tabs" role="tablist" aria-label="排班分頁">
+        <button class="on" data-stab="cal" role="tab" aria-selected="true"><i data-icon="calendar" data-size="16"></i>班表</button>
+        <button data-stab="tpl" role="tab" aria-selected="false"><i data-icon="clock" data-size="16"></i>班別</button>
+        <button data-stab="hol" role="tab" aria-selected="false" class="owner-only"><i data-icon="flag" data-size="16"></i>假日設定</button>
+      </div>
+      <div data-spane="cal">
+        <div class="card sch-bar">
+          <div class="sch-nav">
+            <button class="btn secondary sm icon-only" id="schPrev" aria-label="上一段"><i data-icon="chevronLeft" data-size="18"></i></button>
+            <div class="sch-title"><b id="schTitle"></b><span id="schSub" class="muted"></span></div>
+            <button class="btn secondary sm icon-only" id="schNext" aria-label="下一段"><i data-icon="chevronRight" data-size="18"></i></button>
+            <button class="btn ghost sm" id="schToday">今天</button>
+          </div>
+          <div class="sch-view seg-mini" role="tablist" aria-label="檢視">
+            <button data-sview="week" class="on" role="tab" aria-selected="true">週</button><button data-sview="month" role="tab" aria-selected="false">月</button>
+          </div>
+          <select id="schDept" aria-label="部門"></select>
+        </div>
+        <div class="sch-pub" id="schPub"></div>
+        <div class="sch-tools">
+          <button class="btn secondary sm" id="schBulk"><i data-icon="calendarPlus" data-size="16"></i>批次排班</button>
+          <button class="btn secondary sm" id="schCopy"><i data-icon="repeat" data-size="16"></i>複製上週</button>
+          <button class="btn secondary sm" id="schRepeat"><i data-icon="calendarCheck" data-size="16"></i>套用到之後幾週</button>
+          <button class="btn ghost sm owner-only" id="schHolBtn"><i data-icon="flag" data-size="16"></i>假日設定</button>
+        </div>
+        <div id="schWarn"></div>
+        <div id="schCal"></div>
+        <div class="sch-legend" id="schLegend"></div>
+      </div>
+      <div data-spane="tpl" class="hidden">
+        <div class="sch-tpl-head"><p class="help" style="margin:0">班別是常用的上下班時間；結束時間早於開始時間代表跨夜（隔天下班）。修改班別不影響已排好的班。</p>
+          <button class="btn sm owner-only" id="tplAdd"><i data-icon="plus" data-size="16"></i>新增班別</button></div>
+        <div id="tplList" class="tpl-list"></div>
+      </div>
+      <div data-spane="hol" class="hidden owner-only">
+        <div class="sch-tpl-head"><p class="help" style="margin:0">勞基法國定假日與補假行事曆；請假時數、遲到判斷、薪資試算與排班提醒都依這裡計算。</p>
+          <button class="btn sm" id="holAdd"><i data-icon="plus" data-size="16"></i>新增公司自訂假日</button></div>
       <div class="card pay-bar hol-bar">
         <button class="btn secondary sm icon-only" id="holPrev" aria-label="上一年"><i data-icon="chevronLeft" data-size="18"></i></button>
         <h3 id="holYear" class="hol-year"></h3>
@@ -208,6 +244,7 @@
         </ul>
         <p class="help">資料來源：行政院人事行政總處「政府行政機關辦公日曆表」開放資料（<a href="https://data.gov.tw/dataset/14718" target="_blank" rel="noopener">data.gov.tw/dataset/14718</a>）；法規：<a href="https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=D0020095" target="_blank" rel="noopener">紀念日及節日實施條例</a>、<a href="https://law.moj.gov.tw/LawClass/LawSingle.aspx?pcode=N0030002&flno=23-1" target="_blank" rel="noopener">勞基法施行細則第 23 條之 1</a>。試算僅供參考，請以會計／勞動法規為準。</p>
       </details>
+      </div>
     </section>
 
     <!-- 薪資統整 -->
@@ -442,5 +479,6 @@
 <script src="/icons.js"></script>
 <script src="/common.js"></script>
 <script src="/admin.js"></script>
+<script src="/admin-schedule.js"></script>
 </body>
 </html>

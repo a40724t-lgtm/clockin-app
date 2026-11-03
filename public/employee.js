@@ -149,6 +149,7 @@ function holBadge(h) {
 }
 function renderMain() {
   renderChecks();
+  if (Date.now() - schedAt > 60000) loadMySchedule();
   renderGreeting();
   $('hello').textContent = `${me.employee.name}，${greetingInfo().text}！`;
   const s = me.today_summary;
@@ -347,6 +348,8 @@ function setTab(t) {
   $('punchPane').classList.toggle('hidden', t !== 'punch');
   $('leavePane').classList.toggle('hidden', t !== 'leave');
   $('slipPane').classList.toggle('hidden', t !== 'slip');
+  $('schedPane').classList.toggle('hidden', t !== 'sched');
+  if (t === 'sched') loadMySchedule();
   if (t === 'leave') loadLeave();
   if (t === 'slip') loadSlips();
 }
@@ -593,3 +596,44 @@ async function downloadSlip(month, btn) {
   } catch (e) { if (e.status === 401) { localStorage.removeItem('emp_token'); token = null; return showPick(); } toast(e.message, 'err'); }
   finally { btn.disabled = false; }
 }
+
+// ---------- 我的班表（只顯示已發布） ----------
+let schedAt = 0;
+const shiftText = (x) => `${x.start}–${x.overnight ? '翌日 ' : ''}${x.end}`;
+async function loadMySchedule() {
+  schedAt = Date.now();
+  try {
+    const t = taipeiToday(), to = addDays(t, 13);
+    const r = await api(`/api/schedule?from=${t}&to=${to}`, { headers: auth() });
+    const E = new Map(r.entries.map((x) => [x.date, x])), H = new Map(r.holidays.map((h) => [h.date, h]));
+    const LV = new Map(); for (const l of r.leaves) { if (!LV.has(l.date)) LV.set(l.date, []); LV.get(l.date).push(l); }
+    const pubWeek = (d) => r.published_weeks.some((w) => d >= w && d <= addDays(w, 6));
+    // 打卡頁：今天的班
+    const today = E.get(t);
+    const ts = $('todayShift');
+    ts.classList.toggle('hidden', !today);
+    if (today) ts.innerHTML = today.kind === 'shift' ? `${icon('calendar', 16)}<span>今天 <b>${esc(today.name)} ${shiftText(today)}</b></span>${icon('chevronRight', 16)}` : `${icon('calendar', 16)}<span>今天排<b>${esc(today.kind_text)}</b></span>${icon('chevronRight', 16)}`;
+    ts.onclick = () => setTab('sched');
+    // 下一班
+    const now = Date.now() + (typeof serverOffset === 'number' ? serverOffset : 0);
+    const next = r.entries.find((x) => x.kind === 'shift' && toEpochTP(x.date, x.end) + (x.overnight ? 864e5 : 0) > now);
+    $('msNext').innerHTML = next ? `<div class="ms-next"><span class="s-ic">${icon('clock', 22)}</span><div><span>${next.date === t ? '今天' : next.date === addDays(t, 1) ? '明天' : mdw(next.date)}的班</span><b>${esc(next.name)}・${shiftText(next)}</b><span>${next.hours} 小時${next.break_min ? `（含休息 ${next.break_min} 分）` : ''}${next.note ? `・${esc(next.note)}` : ''}</span></div></div>` : '';
+    const rows = [];
+    let firstUnpub = null;
+    for (let d = t; d <= to; d = addDays(d, 1)) {
+      if (!pubWeek(d)) { firstUnpub = firstUnpub || d; continue; }
+      const x = E.get(d), h = H.get(d), lv = LV.get(d) || [];
+      const [, m, dd] = d.split('-');
+      let main, chip = '';
+      if (x && x.kind === 'shift') { main = `<span class="t">${shiftText(x)}</span><span class="d">${x.hours} 小時・休息 ${x.break_min} 分${x.note ? `・${esc(x.note)}` : ''}</span>`; chip = `<span class="sc sc-${esc(x.color)}"><b>${esc(x.name)}</b></span>`; }
+      else if (x) { main = `<span class="t">${esc(x.kind_text)}</span><span class="d">${x.kind === 'regular' ? '例假日，好好休息' : '休息日'}</span>`; chip = `<span class="sc ${x.kind === 'rest' ? 'sc-off' : 'sc-reg'}"><b>${esc(x.kind_text)}</b></span>`; }
+      else main = '<span class="t" style="font-weight:500;color:var(--muted)">未排班</span>';
+      const tags = [h ? `<span class="sch-hol">${icon('flag', 12)}${esc(h.name)}</span>` : '', ...lv.map((l) => `<span class="sc-tag">${icon(l.kind === 'wfh' ? 'home' : l.kind === 'trip' ? 'briefcase' : 'palm', 12)}${esc(l.type_name)}</span>`)].join('');
+      rows.push(`<div class="ms-row ${d === t ? 'is-today' : ''} ${!x || x.kind !== 'shift' ? 'is-off' : ''}"><div class="ms-date"><b>${Number(dd)}</b><span>${Number(m)}月・週${WD[new Date(d + 'T00:00:00Z').getUTCDay()]}</span></div>
+        <div class="ms-main">${main}${tags ? `<span class="badges">${tags}</span>` : ''}</div>${chip}</div>`);
+    }
+    if (firstUnpub) rows.push(`<div class="ms-row is-off ms-wait">${icon('hourglass', 20)}<div class="ms-main"><span class="t">${mdw(firstUnpub)}起的班表尚未發布</span><span class="d">主管發布後會顯示在這裡</span></div></div>`);
+    $('msList').innerHTML = rows.join('');
+  } catch (e) { if (e.status === 401) return; }
+}
+function toEpochTP(date, time) { const [y, m, d] = date.split('-').map(Number); const [hh, mm] = time.split(':').map(Number); return Date.UTC(y, m - 1, d, hh, mm) - 8 * 3600000; }

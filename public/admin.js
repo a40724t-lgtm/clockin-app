@@ -14,8 +14,8 @@ $('loginForm').onsubmit = async (e) => {
   catch (err) { toast(err.message, 'err'); $('loginPw').select(); }
 };
 let ROLE = 'owner';
-// 主管只看得到「請假」與「打卡紀錄」（伺服器端也會擋其他 API）
-const MANAGER_PAGES = ['leave', 'records'];
+// 主管只看得到「請假」、「排班」與「打卡紀錄」（伺服器端也會擋其他 API）
+const MANAGER_PAGES = ['leave', 'schedule', 'records'];
 function enter(me) {
   $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden');
   ROLE = me.role || 'owner';
@@ -23,7 +23,7 @@ function enter(me) {
   if (ROLE === 'manager') {
     document.querySelectorAll('.side a[data-page]').forEach((a) => { if (!MANAGER_PAGES.includes(a.dataset.page)) a.remove(); });
     const rec = document.querySelector('.side a[data-page=records]'), lvA = document.querySelector('.side a[data-page=leave]');
-    lvA.after(rec); // 主管：請假審核排第一
+    lvA.after(document.querySelector('.side a[data-page=schedule]'), rec); // 主管：請假審核排第一，再來排班
     document.querySelector('.side .nav-label').textContent = '主管';
     $('sideTitle').textContent = me.settings.company_name;
     $('sideSub').textContent = `主管・${me.manager.name}`;
@@ -45,19 +45,24 @@ $('logout').onclick = async () => { await api('/api/admin/logout', { method: 'PO
 document.querySelectorAll('.side a[data-page]').forEach((a) => a.onclick = () => go(a.dataset.page));
 document.querySelectorAll('[data-goto]').forEach((a) => a.onclick = () => go(a.dataset.goto));
 function go(page) {
+  let sub;
+  if (page === 'holidays') { page = 'schedule'; sub = 'hol'; } // 舊連結：假日設定已併入排班
   document.querySelectorAll('.side a[data-page]').forEach((a) => { a.classList.toggle('active', a.dataset.page === page); a.toggleAttribute('aria-current', a.dataset.page === page); });
   document.querySelectorAll('[data-sec]').forEach((s) => s.classList.toggle('hidden', s.dataset.sec !== page));
   window.scrollTo({ top: 0 });
   const act = document.querySelector('.side a.active');
   if (act && matchMedia('(max-width: 900px)').matches) act.scrollIntoView({ inline: ROLE === 'manager' ? 'nearest' : 'center', block: 'nearest' });
   if (ROLE === 'manager' && !MANAGER_PAGES.includes(page)) page = 'leave';
-  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, holidays: loadHolidays, employees: renderEmployees, managers: loadManagers, settings: loadSettings, audit: loadAudit })[page]();
+  if (page === 'schedule') return loadSchedulePage(sub);
+  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, employees: renderEmployees, managers: loadManagers, settings: loadSettings, audit: loadAudit })[page]();
 }
 function handle(err) { if (err.status === 401) { toast('登入逾時，請重新登入', 'err'); setTimeout(() => location.reload(), 800); } else toast(err.message, 'err'); }
 
 // ---------- 共用片段 ----------
 const B = {
   late: (m) => `<span class="badge b-danger">${icon('alertCircle')}遲到 ${m} 分</span>`,
+  early: (m) => `<span class="badge b-danger">${icon('logout')}早退 ${m} 分</span>`,
+  shift: (sh) => `<span class="badge ${sh.kind === 'shift' ? 'b-brand' : 'b-neutral'}" title="已發布班表">${icon('calendar')}${esc(sh.kind === 'shift' ? `${sh.name} ${sh.start}–${sh.overnight ? '翌' : ''}${sh.end}` : `排${sh.kind_text}`)}</span>`,
   ot: (t) => `<span class="badge b-info">${icon('trend')}${t}</span>`,
   issue: (t) => `<span class="badge b-warning">${icon('alert')}${esc(t)}</span>`,
   working: () => '<span class="badge b-success"><span class="dot"></span>上班中</span>',
@@ -164,12 +169,13 @@ async function loadRecords() {
     const r = await api('/api/admin/records?' + query());
     lastRecords = r;
     $('tDays').textContent = r.totals.days; $('tHours').textContent = r.totals.worked_hours; $('tOT').textContent = r.totals.overtime_hours;
-    $('tLate').textContent = r.totals.late_count; $('tIssue').textContent = r.totals.issue_count; $('tLeave').textContent = r.totals.leave_hours; $('tOffsite').textContent = r.totals.offsite_count;
+    $("tLate").textContent = r.totals.early_count ? `${r.totals.late_count} / ${r.totals.early_count}` : r.totals.late_count; $('tIssue').textContent = r.totals.issue_count; $('tLeave').textContent = r.totals.leave_hours; $('tOffsite').textContent = r.totals.offsite_count;
     $('dailyBody').innerHTML = r.daily.map((d) => {
-      const tags = [B.holiday(d.holiday), workTag(d), d.late ? B.late(d.late_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
+      const sh = d.shift;
+      const tags = [B.holiday(d.holiday), sh ? B.shift(sh) : '', workTag(d), d.late ? B.late(d.late_min) : '', d.early ? B.early(d.early_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
       return `<tr class="${d.offsite ? 'row-offsite' : ''}">
       <td class="num">${dateCell(d.date, d.weekday)}</td><td><span class="who">${avatar(d.name, 'sm')}${esc(d.name)}</span></td>
-      <td class="num">${d.first_in || '<span class="muted">—</span>'}</td><td class="num">${d.last_out || '<span class="muted">—</span>'}</td>
+      <td class="num">${d.first_in || '<span class="muted">—</span>'}${sh && sh.kind === 'shift' ? `<span class="sub">排定 ${sh.start}</span>` : ''}</td><td class="num">${d.last_out || '<span class="muted">—</span>'}${sh && sh.kind === 'shift' ? `<span class="sub">排定 ${sh.overnight ? '翌日 ' : ''}${sh.end}</span>` : ''}</td>
       <td class="num">${d.leave_only ? '<span class="muted">—</span>' : `<b>${d.worked_text}</b><span class="sub">${d.worked_hours} 小時</span>`}</td>
       <td>${d.overtime_ms ? B.ot(d.overtime_text) : '<span class="muted">—</span>'}</td>
       <td><span class="badges">${tags || B.normal()}</span>${locLinks(d.locs)}</td></tr>`;
