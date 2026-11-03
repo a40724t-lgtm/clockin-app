@@ -11,6 +11,7 @@ const { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, has
 const app = express();
 // 國定假日行事曆（勞基法第 37 條；資料來源見 holidays.js）
 const HOL = require('./holidays')(db);
+let SCHED = null; // 排班系統（schedule.js，於管理 API 中介層之後註冊）
 const PII = require('./pii');
 L.setOffWeekday(HOL.isOffWeekday);
 const holidayView = (h) => (h ? { name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend, note: h.note || '' } : null);
@@ -138,6 +139,7 @@ function requireAdmin(req, res, next) {
 const MANAGER_ROUTES = [
   ['GET', /^\/me$/], ['PUT', /^\/password$/],
   ['GET', /^\/employees$/], ['GET', /^\/records$/], ['GET', /^\/leave-types$/],
+  ['GET', /^\/schedule$/], ['PUT', /^\/schedule\/entries$/], ['POST', /^\/schedule\/(copy|publish)$/], ['GET', /^\/shift-templates$/],
   ['GET', /^\/leaves$/], ['POST', /^\/leaves\/\d+\/(approve|reject)$/], ['GET', /^\/leaves\/\d+\/attachment$/],
 ];
 function managerGuard(req, res, next) {
@@ -346,6 +348,10 @@ function computeDaily(punches, settings, leaves, range, arrs) {
     if (!groups.has(key)) groups.set(key, { employee_id: p.employee_id, name: p.name, date, punches: [] });
     groups.get(key).punches.push(p);
   }
+  // 已發布的班表（有排班就用班表時間判斷遲到／早退）
+  const dates = [...groups.values()].map((g) => g.date).sort();
+  const sFrom = range?.from || dates[0], sTo = range?.to || dates[dates.length - 1];
+  const schedMap = SCHED && sFrom ? SCHED.publishedMap(sFrom, sTo) : new Map();
   const rows = [];
   for (const g of groups.values()) {
     // 午休時段：與上班區間重疊的部分不計入工時
@@ -372,7 +378,25 @@ function computeDaily(punches, settings, leaves, range, arrs) {
     let late = false, lateMin = 0;
     const lv = leaveMap.get(`${g.employee_id}|${g.date}`);
     const hol = holidayBadge(g.date);
-    if (firstIn !== null && !(hol && hol.off)) { // 放假日（國定假日等）出勤不算遲到
+    const sh = schedMap.get(`${g.employee_id}|${g.date}`);
+    let early = false, earlyMin = 0;
+    if (sh && sh.kind === 'shift') {
+      // 有排班：以班表上下班時間判斷（放假日排班也照算）；請假時段內不算遲到／早退
+      const { s: ss, e: se, overnight } = SCHED.span(g.date, sh.start, sh.end);
+      const its = lv ? lv.items : [];
+      let t = ss;
+      for (let changed = true; changed && t < se;) { changed = false; for (const it of its) if (it.start_ts <= t && it.end_ts > t) { t = it.end_ts; changed = true; } }
+      if (firstIn !== null && t < se) {
+        const diffMin = Math.floor((firstIn - t) / 60000);
+        if (diffMin > settings.late_grace_min) { late = true; lateMin = diffMin; }
+      }
+      let endT = se;
+      for (let changed = true; changed && endT > ss;) { changed = false; for (const it of its) if (it.start_ts < endT && it.end_ts >= endT) { endT = it.start_ts; changed = true; } }
+      // 跨夜班的下班卡記在隔天，這裡不判斷早退
+      if (!overnight && lastOut !== null && !missingOut && endT > ss && lastOut < endT) { early = true; earlyMin = Math.ceil((endT - lastOut) / 60000); }
+    } else if (sh) {
+      // 排休息日／例假：不算遲到
+    } else if (firstIn !== null && !(hol && hol.off)) { // 放假日（國定假日等）出勤不算遲到
       // 請假時段內不算遲到：應到時間往後延到請假結束（遇到午休再延到午休結束）
       const startTs = expectedStart(g.date, settings, lv);
       if (startTs !== null) {
@@ -389,7 +413,7 @@ function computeDaily(punches, settings, leaves, range, arrs) {
       working_now: missingOut && g.date === todayStr(),
       worked_ms: worked, worked_hours: +(worked / 3600000).toFixed(2), worked_text: fmtDur(worked),
       overtime_ms: overtime, overtime_hours: +(overtime / 3600000).toFixed(2), overtime_text: overtime ? fmtDur(overtime) : '',
-      late, late_min: lateMin, edited, issues: [...new Set(issues)],
+      late, late_min: lateMin, early, early_min: earlyMin, edited, issues: [...new Set(issues)], shift: shiftField(sh),
       ...leaveFields(lv), ...workFields(g, arrMap.get(`${g.employee_id}|${g.date}`)), holiday: hol,
     });
   }
@@ -399,13 +423,16 @@ function computeDaily(punches, settings, leaves, range, arrs) {
     rows.push({
       employee_id: lv.employee_id, name: lv.name, date: lv.date, weekday: weekday(lv.date), first_in: '', last_out: '', working_now: false,
       worked_ms: 0, worked_hours: 0, worked_text: fmtDur(0), overtime_ms: 0, overtime_hours: 0, overtime_text: '',
-      late: false, late_min: 0, edited: false, issues: [], ...leaveFields(lv), ...workFields(null, arrMap.get(key)), leave_only: true, holiday: holidayBadge(lv.date),
+      late: false, late_min: 0, early: false, early_min: 0, edited: false, issues: [], shift: shiftField(schedMap.get(key)), ...leaveFields(lv), ...workFields(null, arrMap.get(key)), leave_only: true, holiday: holidayBadge(lv.date),
     });
   }
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name, 'zh-Hant')));
   return rows;
 }
 
+// 紀錄上顯示的班表（排定 vs 實際）
+const shiftField = (sh) => (sh ? { kind: sh.kind, kind_text: sh.kind_text, name: sh.name, start: sh.start, end: sh.end, overnight: !!sh.overnight, hours: sh.hours || 0,
+  text: sh.kind === 'shift' ? `${sh.name} ${sh.start}～${sh.overnight ? '翌日 ' : ''}${sh.end}` : sh.kind_text } : null);
 function expectedStart(date, settings, lv) {
   const w = L.workWindow(date, settings);
   let t = w.ws;
@@ -556,6 +583,7 @@ app.post('/api/admin/logout', (req, res) => {
 });
 app.use('/api/admin', requireAdmin);
 app.use('/api/admin', managerGuard);
+SCHED = require('./schedule')({ app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, todayStr });
 
 app.get('/api/admin/me', (req, res) => {
   if (req.role === 'manager') {
@@ -799,6 +827,7 @@ app.get('/api/admin/records', (req, res) => {
     worked_hours: +(daily.reduce((s, r) => s + r.worked_ms, 0) / 3600000).toFixed(2),
     overtime_hours: +(daily.reduce((s, r) => s + r.overtime_ms, 0) / 3600000).toFixed(2),
     late_count: daily.filter((r) => r.late).length,
+    early_count: daily.filter((r) => r.early).length,
     issue_count: daily.filter((r) => r.issues.length).length,
   };
   res.json({ from, to, daily, punches: punches.slice().reverse().map(punchView), totals, blocked: loadBlocked(from, to, req.query.employee_id || null).filter(mine).reverse() });
