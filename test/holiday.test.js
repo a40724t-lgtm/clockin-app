@@ -2,7 +2,7 @@
 // 執行：npm test（會在暫存資料夾啟動一個獨立的伺服器，不影響正式資料）
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -23,7 +23,7 @@ async function punch(emp, date, tin, tout) {
   await ok('POST', '/api/admin/punches', { employee_id: emp, type: 'out', date, time: tout, reason: '測試' });
 }
 
-let M, H, P; // 月薪、時薪（照給 8 小時）、時薪（無固定排班）
+let M, H, P, Q; // 月薪、時薪（照給 8 小時）、時薪（無固定排班）
 before(async () => {
   srv = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, PORT: String(PORT) }, stdio: 'ignore' });
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
@@ -43,6 +43,9 @@ before(async () => {
   await punch(H, '2026-10-09', '09:00', '14:00');  // 國定假日出勤 4 小時；10/26 未出勤
   await punch(H, '2026-10-13', '09:00', '18:00');  // 一般工作日 8 小時
   await punch(P, '2026-10-26', '09:00', '18:00');  // 原無排班，國定假日出勤 8 小時
+  Q = (await ok('POST', '/api/admin/employees', { name: '一般己', pin: '5004' })).id; // 月薪、國定假日未出勤
+  await ok('PUT', `/api/admin/payroll/employees/${Q}`, { pay_type: 'monthly', pay_amount: 36000, pay_items: [] });
+  await punch(Q, '2026-10-12', '09:00', '18:00');
 });
 after(() => { srv && srv.kill(); fs.rmSync(DATA_DIR, { recursive: true, force: true }); });
 
@@ -112,6 +115,43 @@ test('請假跨國定假日：放假日不計入請假時數', async () => {
   assert.deepEqual(r.holidays_skipped.map((x) => x.date), ['2026-10-09']);
   const only = await call('POST', '/api/leaves', { type_id: tid, mode: 'full', start_date: '2026-10-09', end_date: '2026-10-09', reason: '測試' }, auth);
   assert.equal(only.status, 400); assert.match(only.error, /放假日/);
+});
+
+test('薪資單（HTML／PDF）不列國定假日明細；加給／照給只在金額不為 0 時顯示，PDF 一頁', async () => {
+  const { payslipEarn, hasHolidayPay } = require('../payslip-pdf');
+  const fake = { earn: [{ label: '基本薪資', amount: 100 }, { label: '國定假日出勤加給', amount: 0, group: 'holiday' }, { label: '國定假日照給', amount: 0.2, group: 'holiday' }] };
+  assert.deepEqual(payslipEarn(fake).map((l) => l.label), ['基本薪資']);
+  assert.equal(hasHolidayPay(fake), false);
+  const pdfText = async (id) => {
+    const r = await fetch(`${BASE}/api/admin/payroll/2026-10/payslip/${id}.pdf`, { headers: { cookie } });
+    assert.equal(r.status, 200);
+    const f = path.join(DATA_DIR, `slip-${id}.pdf`); fs.writeFileSync(f, Buffer.from(await r.arrayBuffer()));
+    const pages = Number(/Pages:\s+(\d+)/.exec(spawnSync('pdfinfo', [f], { encoding: 'utf8' }).stdout)[1]);
+    return { text: spawnSync('pdftotext', ['-layout', f, '-'], { encoding: 'utf8' }).stdout, pages };
+  };
+  if (spawnSync('pdftotext', ['-v']).status === null) return; // 沒有 poppler 時略過 PDF 文字檢查
+  // 月薪、國定假日有出勤：只有一行「國定假日出勤加給」，沒有日期明細表
+  const m = await pdfText(M);
+  assert.match(m.text, /國定假日出勤加給/); assert.doesNotMatch(m.text, /國定假日照給/);
+  assert.doesNotMatch(m.text, /國慶日補假|光復|10\/09|10\/26|放假/);
+  assert.equal(m.pages, 1);
+  // 時薪：出勤加給＋照給兩行，沒有明細表
+  const h = await pdfText(H);
+  assert.match(h.text, /國定假日出勤加給/); assert.match(h.text, /國定假日照給/);
+  assert.doesNotMatch(h.text, /國慶日補假|光復|放假/);
+  assert.equal(h.pages, 1);
+  // 兼職（照給 0 小時）：只有出勤加給
+  const pt = await pdfText(P);
+  assert.match(pt.text, /國定假日出勤加給/); assert.doesNotMatch(pt.text, /國定假日照給/);
+  // 一般月份（國定假日未出勤）：薪資單完全不出現國定假日
+  const q = await pdfText(Q);
+  assert.doesNotMatch(q.text, /國定假日/);
+  assert.equal(q.pages, 1);
+  // 後台薪資統整明細不變：仍有國定假日資料
+  const pr = await ok('GET', '/api/admin/payroll?month=2026-10');
+  const pm = pr.employees.find((e) => e.id === M);
+  assert.equal(pm.holiday.worked_days, 2);
+  assert.ok(pm.earn.some((l) => l.label === '國定假日出勤加給' && l.amount === 2400));
 });
 
 test('勞資協商調移、公司自訂假日、政府彈性放假與鎖定月份', async () => {
