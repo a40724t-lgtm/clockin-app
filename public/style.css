@@ -1173,3 +1173,74 @@ body.role-manager .owner-only { display: none !important; }
 /* 淺底（surface-2/3）上的次要文字用 text-2，確保對比 ≥ 4.5:1 */
 .sg-head .dw, .sg-corner .muted, .sch-month .mh span, .pub-row .muted, .sch-title .muted, .sch-strip button i,
 .ms-row.is-off .d, .ms-row.is-off .ms-date span, .ms-wait, .ms-wait .t { color: var(--text-2) !important; }
+
+/* ===== 可上班時段 ===== */
+.av { display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; max-width: 100%; padding: 0 6px; min-height: 18px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid transparent; }
+.av i { font-style: normal; font-weight: 400; }
+.av-ok { color: var(--brand-text); background: var(--surface); border-color: var(--brand-soft-2); }
+.av-pref { color: var(--brand-text); background: var(--brand-soft); border-color: var(--brand-soft-2); }
+.av-no { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-line); }
+.sd-cell .av { align-self: flex-end; }
+.av-banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 0 0 10px; border-radius: var(--r); background: var(--surface-2); color: var(--text); font-size: 14px; }
+.av-banner > svg { color: var(--brand-text); flex-shrink: 0; }
+.av-banner > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; flex: 1; min-width: 0; }
+.av-banner .muted { color: var(--text-2); font-size: 13px; }
+.av-miss { flex-basis: 100%; color: var(--accent-text); font-size: 13px; font-weight: 600; }
+.av-miss.done { color: var(--brand-text); }
+.av-list { display: grid; gap: 10px; }
+.av-card { display: grid; gap: 10px; padding: 14px 16px; }
+.av-top { display: grid; gap: 4px; }
+.av-top > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.av-range { font-size: var(--fs-md); }
+.av-top .muted { font-size: 13px; }
+.av-prog { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-2); }
+.av-prog .bar { flex: 1; margin: 0; height: 8px; }
+.av-names { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.av-names .lbl { font-size: 12px; color: var(--text-2); min-width: 44px; }
+.av-name { padding: 2px 10px; border-radius: 999px; font-size: 13px; background: var(--brand-soft); color: var(--brand-text); }
+.av-name.miss { background: var(--surface); color: var(--accent-text); border: 1px dashed var(--accent-line); }
+.av-act { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.av-ro { font-size: 12px; }
+.tabs .nav-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700; }
+.tabs .nav-count:empty { display: none; }
+.quick-row { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  [data-sec=schedule] .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100%; }
+  [data-sec=schedule] .tabs button { position: relative; flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: 4px 2px; font-size: 12px; white-space: nowrap; }
+  [data-sec=schedule] .tabs .nav-count { position: absolute; top: 3px; right: 6px; min-width: 18px; height: 18px; font-size: 10px; }
+  .av-act .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+/* 員工端：填寫 */
+.av-emp { display: grid; gap: 10px; padding: 14px; margin: 14px 0 6px; border-radius: var(--r-lg); background: var(--surface-2); border: 1px solid var(--line); }
+.av-emp.todo { background: var(--surface); border-color: var(--accent-line); box-shadow: var(--sh-1); }
+.av-emp-top { display: flex; align-items: center; gap: 12px; }
+.av-emp-top > div { display: grid; flex: 1; min-width: 0; }
+.av-emp-top b { font-size: 16px; }
+.av-emp-top span { font-size: 13px; color: var(--text-2); }
+.av-emp-top .s-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--brand); color: var(--on-primary); flex-shrink: 0; }
+.av-emp-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 13px; color: var(--text-2); }
+.av-note { flex-basis: 100%; color: var(--text); }
+.av-emp-sum { font-size: 14px; font-weight: 600; }
+.av-emp-sum .muted { color: var(--text-2); font-weight: 400; }
+.btn.block { width: 100%; justify-content: center; }
+.av-form { display: grid; gap: 10px; margin-top: 14px; }
+.av-form-head { display: flex; align-items: center; gap: 8px; }
+.av-form-head > div { display: grid; }
+.av-form-head b { font-size: 17px; }
+.av-form-head span { font-size: 13px; color: var(--text-2); }
+.av-quick { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+.av-day { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.av-day.is-no { background: color-mix(in srgb, var(--c-accent) 5%, var(--c-bg)); }
+.av-d { display: flex; align-items: center; gap: 8px; }
+.av-note-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; color: var(--text-2); font: inherit; font-size: 13px; min-height: 32px; padding: 0 4px; }
+.av-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 12px; background: var(--surface-3); }
+.av-seg button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 42px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font: inherit; font-size: 14px; font-weight: 600; }
+.av-seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--sh-1); }
+.av-seg button.on.o-ok, .av-seg button.on.o-pref { background: var(--brand); color: var(--on-primary); }
+.av-seg button.on.o-no { background: var(--accent); color: var(--on-accent); }
+.av-tpls { display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
+.av-tpl { display: grid; justify-items: start; gap: 2px; flex-shrink: 0; padding: 6px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); font: inherit; }
+.av-tpl small { font-size: 11px; color: var(--text-2); }
+.av-tpl.on { border-color: var(--brand); box-shadow: var(--ring); }
+.av-submit { position: sticky; bottom: 0; padding: 10px 0 14px; background: linear-gradient(transparent, var(--bg) 30%); }

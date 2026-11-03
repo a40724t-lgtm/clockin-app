@@ -149,7 +149,7 @@ function holBadge(h) {
 }
 function renderMain() {
   renderChecks();
-  if (Date.now() - schedAt > 60000) loadMySchedule();
+  if (Date.now() - schedAt > 60000) { loadMySchedule(); loadAvail(); }
   renderGreeting();
   $('hello').textContent = `${me.employee.name}，${greetingInfo().text}！`;
   const s = me.today_summary;
@@ -349,7 +349,7 @@ function setTab(t) {
   $('leavePane').classList.toggle('hidden', t !== 'leave');
   $('slipPane').classList.toggle('hidden', t !== 'slip');
   $('schedPane').classList.toggle('hidden', t !== 'sched');
-  if (t === 'sched') loadMySchedule();
+  if (t === 'sched') { loadMySchedule(); loadAvail(); }
   if (t === 'leave') loadLeave();
   if (t === 'slip') loadSlips();
 }
@@ -637,3 +637,72 @@ async function loadMySchedule() {
   } catch (e) { if (e.status === 401) return; }
 }
 function toEpochTP(date, time) { const [y, m, d] = date.split('-').map(Number); const [hh, mm] = time.split(':').map(Number); return Date.UTC(y, m - 1, d, hh, mm) - 8 * 3600000; }
+
+// ---------- 填可上班時段 ----------
+let av = null, avEdit = null; // avEdit = { period, days: [...] }（編輯中）
+const dlText = (t) => { const [d, hm] = t.split(' '); return `${mdw(d)}${hm}`; };
+const AV_OPTS = [['ok', '可上班', 'check'], ['pref', '指定班別', 'clock'], ['no', '不行', 'ban']];
+async function loadAvail() {
+  try {
+    av = await api('/api/availability', { headers: auth() });
+    $('schedCount').textContent = av.pending || '';
+    if (!avEdit) renderAvail();
+  } catch (e) { if (e.status === 401) return; }
+}
+function renderAvail() {
+  const box = $('avBox');
+  $('msWrap').classList.toggle('hidden', !!avEdit);
+  if (avEdit) return renderAvailForm();
+  const list = (av ? av.periods : []).filter((p) => p.open || p.submitted_at);
+  box.innerHTML = list.map((p) => {
+    const st = p.submitted_at ? `<span class="badge b-brand">${icon('check')}已提交</span>` : p.open ? `<span class="badge b-warning">${icon('alert')}尚未填寫</span>` : '<span class="badge b-neutral">未提交</span>';
+    const noDays = p.days.filter((d) => d.status === 'no').length, prefDays = p.days.filter((d) => d.status === 'pref').length;
+    return `<div class="av-emp ${p.open && !p.submitted_at ? 'todo' : ''}">
+      <div class="av-emp-top"><span class="s-ic">${icon('calendarCheck', 20)}</span><div><b>填寫可上班時段</b><span>${mdw(p.from)}～${mdw(p.to)}</span></div>${st}</div>
+      <div class="av-emp-meta">${p.open ? `${icon('hourglass', 14)}截止 ${dlText(p.deadline_text)}，截止前都能修改` : `${icon('lock', 14)}已截止`}${p.note ? `<span class="av-note">${esc(p.note)}</span>` : ''}</div>
+      ${p.submitted_at ? `<div class="av-emp-sum">${p.days.length - noDays} 天可上班${prefDays ? `（${prefDays} 天指定班別）` : ''}・${noDays} 天不行<span class="muted">・${dlText(p.submitted_at)} 提交</span></div>` : ''}
+      ${p.open ? `<button class="btn ${p.submitted_at ? 'secondary' : ''} block" data-avopen="${p.id}">${icon('pencil', 18)}${p.submitted_at ? '修改' : '開始填寫'}</button>` : ''}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-avopen]').forEach((b) => b.onclick = () => {
+    const p = av.periods.find((x) => x.id == b.dataset.avopen);
+    avEdit = { period: p, days: p.days.map((d) => ({ ...d, showNote: !!d.note })) };
+    renderAvail(); window.scrollTo({ top: $('schedPane').offsetTop - 12 });
+  });
+}
+function renderAvailForm() {
+  const { period: p, days } = avEdit, tpls = av.templates;
+  const left = days.filter((d) => !d.status || (d.status === 'pref' && !d.template_id)).length;
+  $('avBox').innerHTML = `<div class="av-form">
+    <div class="av-form-head"><button type="button" class="btn ghost sm icon-only" id="avBack" aria-label="返回">${icon('chevronLeft', 20)}</button>
+      <div><b>可上班時段</b><span>${mdw(p.from)}～${mdw(p.to)}・截止 ${dlText(p.deadline_text)}</span></div></div>
+    ${p.note ? `<div class="alert info">${icon('info', 18)}<div>${esc(p.note)}</div></div>` : ''}
+    <div class="av-quick"><span>快速填入</span><button type="button" class="chip-btn" data-all="ok">全部可上班</button><button type="button" class="chip-btn" data-all="wk">平日可上班</button></div>
+    ${days.map((d, i) => `<div class="av-day ${d.status ? `is-${d.status}` : ''}" data-i="${i}">
+      <div class="av-d"><b>${mdw(d.date)}</b>${d.holiday ? `<span class="sch-hol">${icon('flag', 12)}${esc(d.holiday)}</span>` : ''}
+        <button type="button" class="av-note-btn" data-note="${i}">${icon('message', 14)}${d.note ? '備註' : '加備註'}</button></div>
+      <div class="av-seg" role="radiogroup" aria-label="${mdw(d.date)}">${AV_OPTS.map(([v, t, ic]) => `<button type="button" role="radio" aria-checked="${d.status === v}" class="${d.status === v ? 'on' : ''} o-${v}" data-st="${v}">${icon(ic, 16)}${t}</button>`).join('')}</div>
+      ${d.status === 'pref' ? `<div class="av-tpls">${tpls.map((t) => `<button type="button" class="av-tpl ${d.template_id === t.id ? 'on' : ''}" data-tpl="${t.id}" aria-pressed="${d.template_id === t.id}"><span class="sc sc-${esc(t.color)}"><b>${esc(t.name)}</b></span><small>${t.start}–${t.end}</small></button>`).join('')}</div>` : ''}
+      ${d.showNote ? `<input type="text" class="av-note-in" data-ni="${i}" maxlength="60" value="${esc(d.note)}" placeholder="例如：只能到 18:00、下午要上課" aria-label="${mdw(d.date)} 備註">` : ''}
+    </div>`).join('')}
+    <div class="av-submit"><button class="btn block" id="avSubmit" ${left ? 'disabled' : ''}>${icon('send', 18)}${left ? `還有 ${left} 天未填` : p.submitted_at ? '更新提交' : '提交'}</button></div>
+  </div>`;
+  const rerender = () => { const y = window.scrollY; renderAvailForm(); window.scrollTo({ top: y }); };
+  $('avBack').onclick = () => { avEdit = null; renderAvail(); };
+  $('avBox').querySelectorAll('[data-all]').forEach((b) => b.onclick = () => { for (const d of days) { const w = new Date(d.date + 'T00:00:00Z').getUTCDay(); if (b.dataset.all === 'ok' || (w > 0 && w < 6 && !d.holiday)) { d.status = 'ok'; d.template_id = null; } else if (!d.status) d.status = 'no'; } rerender(); });
+  $('avBox').querySelectorAll('.av-day').forEach((row) => {
+    const d = days[row.dataset.i];
+    row.querySelectorAll('[data-st]').forEach((b) => b.onclick = () => { d.status = b.dataset.st; if (d.status !== 'pref') d.template_id = null; else if (!d.template_id && tpls.length === 1) d.template_id = tpls[0].id; rerender(); });
+    row.querySelectorAll('[data-tpl]').forEach((b) => b.onclick = () => { d.template_id = Number(b.dataset.tpl); rerender(); });
+    row.querySelector('[data-note]').onclick = () => { d.showNote = true; rerender(); row.parentNode.querySelector(`[data-ni="${row.dataset.i}"]`)?.focus(); };
+    const ni = row.querySelector('[data-ni]'); if (ni) ni.oninput = () => { d.note = ni.value; };
+  });
+  $('avSubmit').onclick = async () => {
+    $('avSubmit').disabled = true;
+    try {
+      const r = await api(`/api/availability/${p.id}`, { method: 'PUT', headers: auth(), body: { days: days.map((d) => ({ date: d.date, status: d.status, template_id: d.template_id, note: d.note })) } });
+      toast(`已提交${r.no_days ? `（${r.no_days} 天不行）` : ''}，截止前都能修改`, 'ok');
+      avEdit = null; await loadAvail();
+    } catch (e) { toast(e.message, 'err'); $('avSubmit').disabled = false; }
+  };
+}

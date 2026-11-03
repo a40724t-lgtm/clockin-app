@@ -52,7 +52,7 @@
     <h2 class="sr-only" id="hello"></h2>
     <div class="seg seg-4" role="tablist" aria-label="功能切換">
       <button role="tab" id="tabPunch" data-etab="punch" class="on" aria-selected="true" aria-controls="punchPane"><i data-icon="clock" data-size="18"></i>打卡</button>
-      <button role="tab" id="tabSched" data-etab="sched" aria-selected="false" aria-controls="schedPane"><i data-icon="calendar" data-size="18"></i>班表</button>
+      <button role="tab" id="tabSched" data-etab="sched" aria-selected="false" aria-controls="schedPane"><i data-icon="calendar" data-size="18"></i>班表<span class="count" id="schedCount"></span></button>
       <button role="tab" id="tabLeave" data-etab="leave" aria-selected="false" aria-controls="leavePane"><i data-icon="palm" data-size="18"></i>請假<span class="count" id="leavePendCount"></span></button>
       <button role="tab" id="tabSlip" data-etab="slip" aria-selected="false" aria-controls="slipPane"><i data-icon="wallet" data-size="18"></i>薪資單</button>
     </div>
@@ -72,10 +72,13 @@
 
     <!-- 請假 -->
     <div id="schedPane" class="hidden" role="tabpanel" aria-labelledby="tabSched">
+      <div id="avBox"></div>
+      <div class="ms-wrap" id="msWrap">
       <div class="section-title">我的班表<span class="muted" id="msHint">未來兩週</span></div>
       <div id="msNext"></div>
       <div class="my-sch" id="msList"></div>
       <p class="help">只顯示主管已發布的班表；班表有疑問請洽主管。</p>
+      </div>
     </div>
     <div id="leavePane" class="hidden" role="tabpanel" aria-labelledby="tabLeave">
       <div class="card bal-card" id="balCard"></div>

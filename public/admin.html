@@ -190,6 +190,7 @@
       <div class="tabs" role="tablist" aria-label="排班分頁">
         <button class="on" data-stab="cal" role="tab" aria-selected="true"><i data-icon="calendar" data-size="16"></i>班表</button>
         <button data-stab="tpl" role="tab" aria-selected="false"><i data-icon="clock" data-size="16"></i>班別</button>
+        <button data-stab="avail" role="tab" aria-selected="false"><i data-icon="calendarCheck" data-size="16"></i>可上班時段<span class="nav-count" id="availTabCount"></span></button>
         <button data-stab="hol" role="tab" aria-selected="false" class="owner-only"><i data-icon="flag" data-size="16"></i>假日設定</button>
       </div>
       <div data-spane="cal">
@@ -212,6 +213,7 @@
           <button class="btn secondary sm" id="schRepeat"><i data-icon="calendarCheck" data-size="16"></i>套用到之後幾週</button>
           <button class="btn ghost sm owner-only" id="schHolBtn"><i data-icon="flag" data-size="16"></i>假日設定</button>
         </div>
+        <div id="schAvail"></div>
         <div id="schWarn"></div>
         <div id="schCal"></div>
         <div class="sch-legend" id="schLegend"></div>
@@ -220,6 +222,11 @@
         <div class="sch-tpl-head"><p class="help" style="margin:0">班別是常用的上下班時間；結束時間早於開始時間代表跨夜（隔天下班）。修改班別不影響已排好的班。</p>
           <button class="btn sm owner-only" id="tplAdd"><i data-icon="plus" data-size="16"></i>新增班別</button></div>
         <div id="tplList" class="tpl-list"></div>
+      </div>
+      <div data-spane="avail" class="hidden">
+        <div class="sch-tpl-head"><p class="help" style="margin:0" id="avHead">開放一段日期讓員工在打卡頁「班表」填寫可上班時段（可上班／想上的班別／不行），截止前可修改；排班時每一格會顯示員工填的狀態。</p>
+          <button class="btn sm" id="avAdd"><i data-icon="plus" data-size="16"></i>開放登記</button></div>
+        <div id="avList" class="av-list"></div>
       </div>
       <div data-spane="hol" class="hidden owner-only">
         <div class="sch-tpl-head"><p class="help" style="margin:0">勞基法國定假日與補假行事曆；請假時數、遲到判斷、薪資試算與排班提醒都依這裡計算。</p>

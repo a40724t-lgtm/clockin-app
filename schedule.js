@@ -24,7 +24,7 @@ const shiftHours = (x) => { const { s, e } = span(x.date, x.start, x.end); retur
 const r2 = (n) => Math.round(n * 100) / 100;
 
 module.exports = function registerSchedule(ctx) {
-  const { app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime } = ctx;
+  const { app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, AVAIL } = ctx;
   db.exec(`
 CREATE TABLE IF NOT EXISTS shift_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL,
@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     const lastMonthEnd = (() => { const [y, m] = to.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); })();
     const all = loadEntries('schedule_entries', ids, wFrom < mFrom ? wFrom : mFrom, lastMonthEnd > L.addDays(to, 1) ? lastMonthEnd : L.addDays(to, 1));
     const lv = leaveDays(ids, from, to);
+    const av = AVAIL ? AVAIL.availMap(ids, from, to) : new Map();
     const out = [];
     const push = (employee_id, date, type, text) => { if (date >= from && date <= to) out.push({ employee_id, date, type, text }); };
     for (const id of ids) {
@@ -101,6 +102,8 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
         if (hol && hol.off) push(id, x.date, 'holiday', `${hol.name}（${hol.kind_text}）：出勤需經勞工同意，國定假日工資加倍發給`);
         const l = lv.find((d) => d.employee_id === id && d.date === x.date && d.kind === 'leave');
         if (l) push(id, x.date, 'leave', `當天已核准${l.type_name}${l.full ? '（全天）' : '（部分時段）'}`);
+        const a = av.get(`${id}|${x.date}`);
+        if (a && a.status === 'no') push(id, x.date, 'unavail', `員工登記這天不行上班${a.note ? `（${a.note}）` : ''}`);
       }
       // 連續上班天數（例假／休息日／沒有排班都會中斷）
       let streak = 0;
@@ -181,7 +184,8 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     }
     const holidays = HOL.between(from, to).filter((h) => h.off || h.kind === 'swap_out' || h.kind === 'bridge')
       .map((h) => ({ date: h.date, name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend, change_id: h.change_id || null, adopted: !!h.adopted }));
-    res.json({ from, to, employees: emps, entries: draft, published: pub, weeks, leaves: leaveDays(ids, from, to), holidays, warnings: warningsFor(ids, from, to),
+    const av = AVAIL ? [...AVAIL.availMap(ids, from, to).values()] : [];
+    res.json({ from, to, employees: emps, entries: draft, availability: av, avail_periods: AVAIL ? AVAIL.periodsBetween(req, from, to) : [], published: pub, weeks, leaves: leaveDays(ids, from, to), holidays, warnings: warningsFor(ids, from, to),
       templates: templates(false), colors: COLORS, can_edit_holidays: req.role === 'owner', standard_hours: getSettings().standard_hours });
   });
 

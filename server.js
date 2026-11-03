@@ -139,6 +139,7 @@ function requireAdmin(req, res, next) {
 const MANAGER_ROUTES = [
   ['GET', /^\/me$/], ['PUT', /^\/password$/],
   ['GET', /^\/employees$/], ['GET', /^\/records$/], ['GET', /^\/leave-types$/],
+  ['GET', /^\/avail-periods$/], ['POST', /^\/avail-periods$/], ['PUT', /^\/avail-periods\/\d+$/], ['DELETE', /^\/avail-periods\/\d+$/],
   ['GET', /^\/schedule$/], ['PUT', /^\/schedule\/entries$/], ['POST', /^\/schedule\/(copy|publish)$/], ['GET', /^\/shift-templates$/],
   ['GET', /^\/leaves$/], ['POST', /^\/leaves\/\d+\/(approve|reject)$/], ['GET', /^\/leaves\/\d+\/attachment$/],
 ];
@@ -583,7 +584,8 @@ app.post('/api/admin/logout', (req, res) => {
 });
 app.use('/api/admin', requireAdmin);
 app.use('/api/admin', managerGuard);
-SCHED = require('./schedule')({ app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, todayStr });
+const AVAIL = require('./availability')({ app, db, audit, HOL, inTeam, requireEmployee, fmtDateTime, todayStr });
+SCHED = require('./schedule')({ app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, todayStr, AVAIL });
 
 app.get('/api/admin/me', (req, res) => {
   if (req.role === 'manager') {
