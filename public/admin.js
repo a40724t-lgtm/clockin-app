@@ -10,11 +10,29 @@ async function init() {
 }
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
-  try { await api('/api/admin/login', { method: 'POST', body: { password: $('loginPw').value } }); const me = await api('/api/admin/me'); enter(me); }
+  try { await api('/api/admin/login', { method: 'POST', body: { username: $('loginUser').value.trim(), password: $('loginPw').value } }); const me = await api('/api/admin/me'); enter(me); }
   catch (err) { toast(err.message, 'err'); $('loginPw').select(); }
 };
+let ROLE = 'owner';
+// 主管只看得到「請假」與「打卡紀錄」（伺服器端也會擋其他 API）
+const MANAGER_PAGES = ['leave', 'records'];
 function enter(me) {
   $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden');
+  ROLE = me.role || 'owner';
+  document.body.classList.toggle('role-manager', ROLE === 'manager');
+  if (ROLE === 'manager') {
+    document.querySelectorAll('.side a[data-page]').forEach((a) => { if (!MANAGER_PAGES.includes(a.dataset.page)) a.remove(); });
+    const rec = document.querySelector('.side a[data-page=records]'), lvA = document.querySelector('.side a[data-page=leave]');
+    lvA.after(rec); // 主管：請假審核排第一
+    document.querySelector('.side .nav-label').textContent = '主管';
+    $('sideTitle').textContent = me.settings.company_name;
+    $('sideSub').textContent = `主管・${me.manager.name}`;
+    $('mgrLeaveHead').textContent = `審核您團隊（${me.team_size} 人${me.manager.departments.length ? `・${me.manager.departments.join('、')}` : ''}）的請假、居家上班與公差申請`;
+    setLeaveCount(me.leave_pending);
+    const t = taipeiToday(); $('fTo').value = t; $('fFrom').value = addDays(t, -6);
+    loadEmployees().then(() => go('leave'));
+    return;
+  }
   $('pwWarn').classList.toggle('hidden', !me.default_password);
   showCheckWarn(me.checks);
   $('sideTitle').textContent = me.settings.company_name;
@@ -31,8 +49,9 @@ function go(page) {
   document.querySelectorAll('[data-sec]').forEach((s) => s.classList.toggle('hidden', s.dataset.sec !== page));
   window.scrollTo({ top: 0 });
   const act = document.querySelector('.side a.active');
-  if (act && matchMedia('(max-width: 900px)').matches) act.scrollIntoView({ inline: 'center', block: 'nearest' });
-  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, holidays: loadHolidays, employees: renderEmployees, settings: loadSettings, audit: loadAudit })[page]();
+  if (act && matchMedia('(max-width: 900px)').matches) act.scrollIntoView({ inline: ROLE === 'manager' ? 'nearest' : 'center', block: 'nearest' });
+  if (ROLE === 'manager' && !MANAGER_PAGES.includes(page)) page = 'leave';
+  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, holidays: loadHolidays, employees: renderEmployees, managers: loadManagers, settings: loadSettings, audit: loadAudit })[page]();
 }
 function handle(err) { if (err.status === 401) { toast('登入逾時，請重新登入', 'err'); setTimeout(() => location.reload(), 800); } else toast(err.message, 'err'); }
 
@@ -160,7 +179,7 @@ async function loadRecords() {
       <td><span class="badges">${B.type(p.type, p.type_text)}${p.offsite ? B.offsite(1) : ''}</span></td>
       <td>${netCell(p)}</td><td>${locCell(p)}</td>
       <td class="wrap">${p.source === 'admin' ? '<b>管理員補登</b>' : '員工打卡'}${p.check_note && (p.offsite || p.work_mode) ? `<span class="note">${esc(p.check_note)}</span>` : ''}${p.edit_note ? `<span class="note">${esc(p.edit_note)}</span>` : ''}</td>
-      <td><div class="cell-actions"><button class="btn secondary sm icon-only" data-edit="${p.id}" title="修改" aria-label="修改這筆打卡">${icon('pencil', 16)}</button><button class="btn danger-ghost sm icon-only" data-del="${p.id}" title="刪除" aria-label="刪除這筆打卡">${icon('trash', 16)}</button></div></td></tr>`).join('')
+      <td><div class="cell-actions owner-only"><button class="btn secondary sm icon-only" data-edit="${p.id}" title="修改" aria-label="修改這筆打卡">${icon('pencil', 16)}</button><button class="btn danger-ghost sm icon-only" data-del="${p.id}" title="刪除" aria-label="刪除這筆打卡">${icon('trash', 16)}</button></div></td></tr>`).join('')
       || emptyRow(8, '此區間沒有紀錄', '試著調整日期範圍或員工', 'clock');
     $('blockedCount').textContent = r.blocked.length ? r.blocked.length : '';
     $('blockedBody').innerHTML = r.blocked.map((b) => `<tr><td class="num">${dateCell(b.date, b.weekday)}</td><td class="num"><b>${b.time}</b></td><td><span class="who">${avatar(b.name, 'sm')}${esc(b.name)}</span></td>
@@ -236,7 +255,7 @@ function delPunch(p) {
 async function loadEmployees() { try { employees = await api('/api/admin/employees'); fillEmpSelect(); fillLeaveEmpSelects(); } catch (e) { handle(e); } }
 async function renderEmployees() {
   await loadEmployees();
-  $('empBody').innerHTML = employees.map((e) => `<tr><td><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></td>
+  $('empBody').innerHTML = employees.map((e) => `<tr><td><span class="who">${avatar(e.name, 'sm')}<span>${esc(e.name)} ${e.is_sample ? B.sample() : ''}${e.department ? `<span class="sub" style="font-weight:400">${icon('users', 13)} ${esc(e.department)}</span>` : ''}</span></span></td>
     <td><span class="pin-pill">${esc(e.pin)}</span></td><td class="nid-cell">${e.has_national_id ? `<span class="nid-mask mono" title="已加密儲存，僅顯示部分號碼">${esc(e.national_id_masked)}</span>` : `<span class="badge b-warning" title="${esc(e.national_id_error || '未登錄身分證字號就無法寄送加密的 PDF 薪資單')}">${e.national_id_error ? '需重新輸入' : '未登錄'}</span>`}</td><td class="email-cell">${e.email ? `${esc(e.email)}${isDemoEmail(e.email) ? ' <span class="badge b-neutral" title="example.com 為示範用保留網域，系統不會寄出">示範地址</span>' : ''}` : '<span class="badge b-warning">未填寫</span>'}</td><td class="muted">${esc(e.note) || '—'}</td>
     <td><div class="cell-actions"><button class="btn secondary sm" data-eedit="${e.id}">${icon('pencil', 15)}編輯</button><button class="btn danger-ghost sm" data-edel="${e.id}">${icon('trash', 15)}移除</button></div></td></tr>`).join('')
     || emptyRow(6, '還沒有員工', '按右上角「新增員工」開始建立', 'users');
@@ -257,7 +276,9 @@ function empModal(e, after) {
       ${e.has_national_id ? '<label class="check-inline" style="margin-top:6px"><input type="checkbox" name="clear_national_id" value="1">清除已登錄的身分證字號</label>' : ''}</div>
     <div><label for="empEmail">Email（選填，用來寄送 PDF 薪資單）</label><input type="email" id="empEmail" name="email" value="${esc(e.email || '')}" maxlength="120" placeholder="例如：wang@gmail.com" spellcheck="false" autocomplete="off">
       ${isDemoEmail(e.email) ? '<p class="help" style="margin:4px 0 0">目前是示範地址（example.com 為保留網域，系統不會寄出），請改成員工真正的 Email。</p>' : ''}</div>
-    <div><label>備註（選填）</label><input type="text" name="note" value="${esc(e.note)}" placeholder="例如：門市、兼職"></div>
+    <div><label for="empDept">部門（選填，主管依部門審核請假）</label><input type="text" id="empDept" name="department" value="${esc(e.department || '')}" maxlength="20" list="deptList" placeholder="例如：門市部" autocomplete="off">
+      <datalist id="deptList">${[...new Set(employees.map((x) => x.department).filter(Boolean))].map((d) => `<option value="${esc(d)}">`).join('')}</datalist></div>
+    <div><label>備註（選填）</label><input type="text" name="note" value="${esc(e.note)}" placeholder="例如：兼職"></div>
     ${actions('儲存')}</form>`,
   async (f) => {
     if (isNew) await api('/api/admin/employees', { method: 'POST', body: formData(f) });
@@ -356,8 +377,8 @@ const AUDIT_IC = { 新增員工: 'plus', 修改員工: 'user', 移除員工: 'tr
   核准請假: 'calendarCheck', 修改薪資設定: 'banknote', 修改薪資規則: 'scale', 薪資調整: 'wallet', 確認薪資: 'lock', 解除薪資確認: 'unlock', 退回請假: 'calendarX', 撤銷請假: 'undo', 取消請假: 'undo', 調整特休額度: 'palm', 新增假別: 'tag', 修改假別: 'tag', 寄送薪資單: 'send', 修改寄信設定: 'mail', 寄送測試信: 'send' };
 async function loadAudit() {
   try { const list = await api('/api/admin/audit');
-    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : /薪資|寄信|測試信/.test(a.action) ? 'b-info' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
-      || emptyRow(3, '尚無修改紀錄', '管理員的變更會記錄在這裡', 'history');
+    $('auditBody').innerHTML = list.map((a) => `<tr><td class="num muted">${a.at_text}</td><td>${a.actor && a.actor !== '管理員' ? `<span class="badge b-accent">${icon('shield')}${esc(a.actor)}</span>` : '<span class="muted">管理員</span>'}</td><td><span class="badge ${/刪除|移除|退回|撤銷/.test(a.action) ? 'b-danger' : /核准/.test(a.action) ? 'b-success' : /請假|特休|假別/.test(a.action) ? 'b-accent' : /薪資|寄信|測試信/.test(a.action) ? 'b-info' : 'b-brand'}">${icon(AUDIT_IC[a.action] || 'edit3')}${esc(a.action)}</span></td><td class="wrap">${esc(a.detail)}</td></tr>`).join('')
+      || emptyRow(4, '尚無修改紀錄', '管理員的變更會記錄在這裡', 'history');
   } catch (e) { handle(e); }
 }
 
@@ -477,8 +498,8 @@ async function loadLeaveList() {
       <td class="num">${isWork(l) ? `<span class="muted">${l.days.length} 天・不扣假</span>` : `<b>${l.hours}</b> 小時`}</td>
       <td class="wrap" style="min-width:120px">${esc(l.reason)}</td>
       <td>${lvStatus(l)}${l.decided_text ? `<span class="sub">${esc(l.decided_text)}</span>` : ''}</td>
-      <td class="wrap" style="min-width:120px">${l.admin_comment ? esc(l.admin_comment) : '<span class="muted">—</span>'}</td>
-      <td><div class="cell-actions">${attBtn(l, false)}${l.status === 'approved' ? `<button class="btn secondary sm icon-only" data-revoke="${l.id}" title="撤銷" aria-label="撤銷 ${esc(l.name)} 的${esc(l.type_name)}">${icon('undo', 16)}</button>` : ''}${l.status === 'pending' ? `<button class="btn sm icon-only" data-approve="${l.id}" title="核准" aria-label="核准 ${esc(l.name)} 的${esc(l.type_name)}">${icon('check', 16)}</button><button class="btn danger-ghost sm icon-only" data-reject="${l.id}" title="退回" aria-label="退回 ${esc(l.name)} 的${esc(l.type_name)}">${icon('x', 16)}</button>` : ''}</div></td></tr>`).join('')
+      <td class="wrap" style="min-width:120px">${l.admin_comment ? esc(l.admin_comment) : '<span class="muted">—</span>'}${l.decided_by ? `<span class="sub">審核：${esc(l.decided_by)}</span>` : ''}</td>
+      <td><div class="cell-actions">${attBtn(l, false)}${l.status === 'approved' && ROLE === 'owner' ? `<button class="btn secondary sm icon-only" data-revoke="${l.id}" title="撤銷" aria-label="撤銷 ${esc(l.name)} 的${esc(l.type_name)}">${icon('undo', 16)}</button>` : ''}${l.status === 'pending' ? `<button class="btn sm icon-only" data-approve="${l.id}" title="核准" aria-label="核准 ${esc(l.name)} 的${esc(l.type_name)}">${icon('check', 16)}</button><button class="btn danger-ghost sm icon-only" data-reject="${l.id}" title="退回" aria-label="退回 ${esc(l.name)} 的${esc(l.type_name)}">${icon('x', 16)}</button>` : ''}</div></td></tr>`).join('')
       || emptyRow(8, '沒有符合條件的申請', '試著調整日期、員工或狀態', 'calendar');
     bindDecide($('lvBody'), r.leaves);
     $('lvBody').querySelectorAll('[data-revoke]').forEach((b) => b.onclick = () => revokeModal(r.leaves.find((l) => l.id == b.dataset.revoke)));
@@ -521,6 +542,7 @@ function leaveDetail(l) {
     <div class="summary-box"><span class="who">${avatar(l.name, 'sm')}${esc(l.name)}</span>
       <div style="margin-top:8px;display:grid;gap:6px"><div><b>${esc(l.type_name)}</b>・${esc(lvWhen(l))}</div><div class="muted">${esc(l.hours_text)}${l.destination ? `・地點：${esc(l.destination)}` : ''}</div><div>${esc(l.reason)}</div>
       <div class="badges">${lvStatus(l)}${balInline(l)}${attBtn(l)}</div>
+      ${l.decided_by ? `<div class="muted">審核者：${esc(l.decided_by)}・${esc(l.decided_text)}</div>` : ''}
       ${l.admin_comment ? `<div class="muted">審核意見：${esc(l.admin_comment)}</div>` : ''}</div></div>
     <div class="actions">${l.status === 'pending'
       ? `<button type="button" class="btn secondary" data-cancel>關閉</button><button type="button" class="btn danger-ghost" data-d="reject">${icon('x', 16)}退回</button><button type="submit" class="btn">${icon('check', 16)}核准</button>`
@@ -1065,3 +1087,66 @@ $('holAdd').onclick = () => modal(`<form class="form-grid">
   async (f) => { await api('/api/admin/holidays/custom', { method: 'POST', body: formData(f) }); toast('已新增公司自訂假日', 'ok'); holYear = Number(f.date.value.slice(0, 4)); loadHolidays(); }, { title: '新增公司自訂假日', icon: 'flag' });
 
 init();
+
+
+// =========================================================
+// 主管帳號（管理員）
+// =========================================================
+let mgrCache = null;
+async function loadManagers() {
+  try { mgrCache = await api('/api/admin/managers'); } catch (e) { return handle(e); }
+  const list = mgrCache.managers;
+  $('mgrList').innerHTML = list.map((m) => `<article class="card mgr-card ${m.active ? '' : 'off'}">
+    <div class="mgr-top"><span class="who">${avatar(m.name, 'md')}<span><b>${esc(m.name)}</b>${m.active ? '' : ' <span class="badge b-neutral">已停用</span>'}<span class="sub mono">${esc(m.username)}</span></span></span>
+      <div class="cell-actions"><button class="btn secondary sm" data-medit="${m.id}">${icon('pencil', 15)}編輯</button><button class="btn danger-ghost sm" data-mdel="${m.id}">${icon('trash', 15)}刪除</button></div></div>
+    <dl class="mgr-meta">
+      <dt>管理部門</dt><dd>${m.departments.length ? m.departments.map((d) => `<span class="badge b-brand">${icon('users')}${esc(d)}</span>`).join('') : '<span class="muted">—</span>'}</dd>
+      <dt>團隊成員</dt><dd>${m.team.length ? `${m.team.length} 人：${m.team.map((e) => esc(e.name)).join('、')}` : '<span class="badge b-warning">目前沒有成員</span>'}</dd>
+      <dt>最近登入</dt><dd class="muted">${esc(m.last_login_text || '尚未登入')}</dd>
+    </dl></article>`).join('')
+    || `<div class="card empty"><span class="empty-ic">${icon('shield', 24)}</span><b>還沒有主管帳號</b>按右上角「新增主管」，讓部門主管自行審核團隊的請假</div>`;
+  $('mgrList').querySelectorAll('[data-medit]').forEach((b) => b.onclick = () => mgrModal(list.find((m) => m.id == b.dataset.medit)));
+  $('mgrList').querySelectorAll('[data-mdel]').forEach((b) => b.onclick = () => {
+    const m = list.find((x) => x.id == b.dataset.mdel);
+    modal(`<form class="form-grid"><p style="margin:0">確定要刪除主管「<b>${esc(m.name)}</b>」（${esc(m.username)}）嗎？刪除後無法再登入；已審核的申請仍會保留審核者姓名。</p>${actions('刪除', true)}</form>`,
+      async () => { await api('/api/admin/managers/' + m.id, { method: 'DELETE' }); toast('已刪除主管帳號', 'ok'); loadManagers(); }, { title: '刪除主管帳號', icon: 'trash', danger: true });
+  });
+}
+async function mgrModal(m) {
+  if (!employees.length || employees.some((e) => e.department === undefined)) await loadEmployees();
+  const isNew = !m; m = m || { name: '', username: '', departments: [], employee_ids: [], active: true };
+  const deps = [...new Set([...(mgrCache ? mgrCache.departments : []), ...m.departments])];
+  modal(`<form class="form-grid mgr-form" novalidate>
+    <div class="row2"><div><label for="mgName">姓名</label><input type="text" id="mgName" name="name" value="${esc(m.name)}" maxlength="30" required placeholder="例如：陳店長"></div>
+      <div><label for="mgUser">登入帳號</label><input type="text" id="mgUser" name="username" value="${esc(m.username)}" maxlength="30" required class="mono" autocapitalize="off" spellcheck="false" autocomplete="off" placeholder="例如：chen.store"></div></div>
+    <div><label for="mgPw">${isNew ? '密碼（至少 8 個字元）' : '重設密碼（留空表示不變更）'}</label><input type="password" id="mgPw" name="password" minlength="8" autocomplete="new-password" ${isNew ? 'required' : ''} placeholder="${isNew ? '' : '留空表示不變更'}">
+      <p class="help" style="margin:4px 0 0">密碼以 scrypt 雜湊後儲存，管理員也看不到原密碼。請當面或用安全的方式告訴主管。</p></div>
+    <div><div class="label">管理部門</div>
+      <div class="mgr-picks">${deps.map((d) => `<label class="mpick"><input type="checkbox" name="dep" value="${esc(d)}" ${m.departments.includes(d) ? 'checked' : ''}><span>${esc(d)}<small>${employees.filter((e) => e.department === d).length} 人</small></span></label>`).join('') || '<p class="help" style="margin:0">尚未設定任何部門。可到「員工管理」編輯員工填入部門，或直接在下方勾選員工。</p>'}</div></div>
+    <div><div class="label">另外指定員工</div>
+      <div class="mgr-picks">${employees.map((e) => `<label class="mpick"><input type="checkbox" name="emp" value="${e.id}" ${m.employee_ids.includes(e.id) ? 'checked' : ''}><span>${esc(e.name)}${e.department ? `<small>${esc(e.department)}</small>` : ''}</span></label>`).join('')}</div></div>
+    ${isNew ? '' : `<label class="switch-row" for="mgActive"><input type="checkbox" class="switch" id="mgActive" ${m.active ? 'checked' : ''}><span><span class="t">啟用</span><br><span class="d">停用後無法登入，已登入的會被登出</span></span></label>`}
+    <p class="help" id="mgTeam" style="margin:0"></p>
+    ${actions('儲存')}</form>`,
+  async (f) => {
+    const body = { name: $('mgName').value, username: $('mgUser').value, password: $('mgPw').value,
+      departments: [...f.querySelectorAll('[name=dep]:checked')].map((x) => x.value), employee_ids: [...f.querySelectorAll('[name=emp]:checked')].map((x) => Number(x.value)) };
+    if (!isNew) body.active = $('mgActive').checked;
+    if (isNew) await api('/api/admin/managers', { method: 'POST', body }); else await api('/api/admin/managers/' + m.id, { method: 'PUT', body });
+    toast(isNew ? `已建立主管帳號 ${body.username}` : '已儲存', 'ok'); loadManagers();
+  }, { title: isNew ? '新增主管' : `編輯主管：${m.name}`, icon: 'shield' });
+  const sync = () => {
+    const f = $('modal').querySelector('form');
+    const ds = [...f.querySelectorAll('[name=dep]:checked')].map((x) => x.value), ids = [...f.querySelectorAll('[name=emp]:checked')].map((x) => Number(x.value));
+    const team = employees.filter((e) => ids.includes(e.id) || (e.department && ds.includes(e.department)));
+    $('mgTeam').innerHTML = team.length ? `${icon('users', 14)} 團隊共 ${team.length} 人：${team.map((e) => esc(e.name)).join('、')}` : `${icon('alert', 14)} 請至少選一個部門或一位員工`;
+  };
+  $('modal').querySelectorAll('[name=dep],[name=emp]').forEach((x) => x.onchange = sync); sync();
+}
+$('addMgr').onclick = () => mgrModal(null);
+// 主管變更自己的密碼
+$('mgrPw').onclick = () => modal(`<form class="form-grid">
+    <div><label for="mpOld">目前密碼</label><input type="password" id="mpOld" name="old_password" required autocomplete="current-password"></div>
+    <div><label for="mpNew">新密碼（至少 8 個字元）</label><input type="password" id="mpNew" name="new_password" minlength="8" required autocomplete="new-password"></div>
+    ${actions('變更密碼')}</form>`,
+  async (f) => { await api('/api/admin/password', { method: 'PUT', body: formData(f) }); toast('密碼已變更', 'ok'); }, { title: '變更密碼', icon: 'key' });

@@ -18,9 +18,11 @@
   <div class="card login-card">
     <span class="brand-mark"><i data-icon="shield" data-size="26"></i></span>
     <h2>管理後台登入</h2>
-    <p class="sub">員工打卡系統・請輸入管理員密碼</p>
+    <p class="sub">員工打卡系統・管理員只需輸入密碼；主管請輸入帳號與密碼</p>
     <form id="loginForm" class="form-grid">
-      <div><label for="loginPw">管理員密碼</label>
+      <div><label for="loginUser">主管帳號<span class="muted" style="font-weight:400">（管理員免填）</span></label>
+        <div class="input-icon"><i data-icon="user" data-size="18"></i><input type="text" id="loginUser" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="管理員請留空"></div></div>
+      <div><label for="loginPw">密碼</label>
         <div class="input-icon"><i data-icon="lock" data-size="18"></i><input type="password" id="loginPw" autocomplete="current-password" required></div></div>
       <button class="btn block" type="submit"><i data-icon="login" data-size="18"></i>登入</button>
     </form>
@@ -32,7 +34,7 @@
   <nav class="side" aria-label="主選單">
     <div class="brand">
       <span class="brand-mark"><i data-icon="clock" data-size="20"></i></span>
-      <div style="min-width:0"><div class="brand-name" id="sideTitle">我的公司</div><div class="brand-sub">打卡管理後台</div></div>
+      <div style="min-width:0"><div class="brand-name" id="sideTitle">我的公司</div><div class="brand-sub" id="sideSub">打卡管理後台</div></div>
     </div>
     <div class="nav-label">管理</div>
     <a data-page="overview" class="active"><i data-icon="dashboard"></i>今日總覽</a>
@@ -41,11 +43,13 @@
     <a data-page="payroll"><i data-icon="wallet"></i>薪資統整</a>
     <a data-page="holidays"><i data-icon="flag"></i>國定假日</a>
     <a data-page="employees"><i data-icon="users"></i>員工管理</a>
+    <a data-page="managers"><i data-icon="shield"></i>主管帳號</a>
     <a data-page="settings"><i data-icon="sliders"></i>設定</a>
     <a data-page="audit"><i data-icon="history"></i>修改紀錄</a>
     <div class="spacer"></div>
     <div class="side-foot">
       <a href="/" target="_blank"><i data-icon="phone"></i>員工打卡頁</a>
+      <a id="mgrPw" class="mgr-only"><i data-icon="key"></i>變更密碼</a>
       <a id="logout"><i data-icon="logout"></i>登出</a>
     </div>
   </nav>
@@ -85,11 +89,11 @@
 
     <!-- 打卡紀錄 -->
     <section data-sec="records" class="hidden">
-      <div class="page-head"><div><h1>打卡紀錄</h1><p>依日期與員工查詢、補登與匯出</p></div>
+      <div class="page-head"><div><h1>打卡紀錄</h1><p class="owner-only">依日期與員工查詢、補登與匯出</p><p class="mgr-only">您團隊成員的出勤紀錄（唯讀）</p></div>
         <div class="inline-actions">
-          <button class="btn secondary" id="expCsv"><i data-icon="download" data-size="18"></i>匯出 CSV</button>
-          <button class="btn secondary" id="expXlsx"><i data-icon="sheet" data-size="18"></i>匯出 Excel</button>
-          <button class="btn" id="addPunch"><i data-icon="plus" data-size="18"></i>補登打卡</button>
+          <button class="btn secondary owner-only" id="expCsv"><i data-icon="download" data-size="18"></i>匯出 CSV</button>
+          <button class="btn secondary owner-only" id="expXlsx"><i data-icon="sheet" data-size="18"></i>匯出 Excel</button>
+          <button class="btn owner-only" id="addPunch"><i data-icon="plus" data-size="18"></i>補登打卡</button>
         </div></div>
       <div class="card">
         <div class="filters">
@@ -117,7 +121,7 @@
       </div>
       <div class="tabs" role="tablist">
         <button class="on" data-tab="daily"><i data-icon="calendar" data-size="16"></i>每日工時</button>
-        <button data-tab="punches"><i data-icon="clock" data-size="16"></i>打卡明細（可修改）</button>
+        <button data-tab="punches"><i data-icon="clock" data-size="16"></i>打卡明細<span class="owner-only">（可修改）</span></button>
         <button data-tab="blocked"><i data-icon="ban" data-size="16"></i>被拒絕的打卡 <span class="count" id="blockedCount"></span></button>
       </div>
       <div class="card table-card" id="tabDaily"><div class="table-wrap"><table class="stack"><thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>加班</th><th>狀態</th></tr></thead><tbody id="dailyBody"></tbody></table></div></div>
@@ -128,12 +132,12 @@
 
     <!-- 請假 -->
     <section data-sec="leave" class="hidden">
-      <div class="page-head"><div><h1>請假管理</h1><p>審核員工的請假、居家上班與公差申請，查看行事曆，並設定假別與特休額度</p></div></div>
+      <div class="page-head"><div><h1>請假管理</h1><p class="owner-only">審核員工的請假、居家上班與公差申請，查看行事曆，並設定假別與特休額度</p><p class="mgr-only" id="mgrLeaveHead">審核您團隊成員的請假、居家上班與公差申請</p></div></div>
       <div class="tabs" role="tablist" aria-label="請假分頁">
         <button class="on" data-ltab="pending" role="tab"><i data-icon="hourglass" data-size="16"></i>待審核 <span class="count" id="lvPendTab"></span></button>
         <button data-ltab="list" role="tab"><i data-icon="list" data-size="16"></i>全部紀錄</button>
         <button data-ltab="cal" role="tab"><i data-icon="calendar" data-size="16"></i>行事曆</button>
-        <button data-ltab="setup" role="tab"><i data-icon="palm" data-size="16"></i>特休額度與假別</button>
+        <button data-ltab="setup" role="tab" class="owner-only"><i data-icon="palm" data-size="16"></i>特休額度與假別</button>
       </div>
 
       <div data-lpane="pending"><div class="pending-list" id="pendList"></div></div>
@@ -413,9 +417,23 @@
     </section>
 
     <!-- 修改紀錄 -->
+    <!-- 主管帳號 -->
+    <section data-sec="managers" class="hidden">
+      <div class="page-head"><div><h1>主管帳號</h1><p>主管可用自己的帳號登入後台，只能審核與查看被指派員工的請假、居家上班、公差與打卡紀錄</p></div>
+        <button class="btn" id="addMgr"><i data-icon="plus" data-size="18"></i>新增主管</button></div>
+      <div class="mgr-list" id="mgrList"></div>
+      <details class="card mgr-rules"><summary><i data-icon="shield" data-size="16"></i>主管可以做什麼？</summary>
+        <ul>
+          <li>可以：查看並核准／退回被指派員工的請假、居家上班、公差申請（可填意見）；查看這些員工的打卡紀錄（唯讀）。</li>
+          <li>不可以：看薪資、身分證字號、PIN、Email、寄信與系統設定、國定假日設定，也看不到其他部門的員工；不能補登或修改打卡、撤銷已核准的假。</li>
+          <li>指派方式：選「部門」會自動包含該部門所有在職員工（部門在「員工管理」設定）；也可以另外勾選個別員工。</li>
+          <li>管理員仍可審核所有申請。審核者姓名會顯示在員工的申請紀錄，並記錄在「修改紀錄」。</li>
+        </ul></details>
+    </section>
+
     <section data-sec="audit" class="hidden">
-      <div class="page-head"><div><h1>修改紀錄</h1><p>管理員的所有新增、修改與刪除動作</p></div></div>
-      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>時間</th><th>動作</th><th>內容</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>
+      <div class="page-head"><div><h1>修改紀錄</h1><p>管理員與主管的所有新增、修改、審核與刪除動作</p></div></div>
+      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>時間</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>
     </section>
   </div></main>
 </div>

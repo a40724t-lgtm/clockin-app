@@ -147,6 +147,29 @@ if (!empCols.includes('holiday_hours')) db.exec('ALTER TABLE employees ADD COLUM
 if (!empCols.includes('email')) db.exec("ALTER TABLE employees ADD COLUMN email TEXT DEFAULT ''");
 // 身分證字號（PDF 薪資單開啟密碼）：AES-256-GCM 加密後儲存，見 pii.js
 if (!empCols.includes('national_id_enc')) db.exec("ALTER TABLE employees ADD COLUMN national_id_enc TEXT DEFAULT ''");
+// 部門（主管依部門管理員工）
+if (!empCols.includes('department')) db.exec("ALTER TABLE employees ADD COLUMN department TEXT DEFAULT ''");
+// 主管帳號：可登入 /admin，只能審核／查看被指派員工的請假、居家、公差與打卡紀錄
+db.exec(`
+CREATE TABLE IF NOT EXISTS managers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,       -- scrypt（見 hashPassword）
+  departments TEXT DEFAULT '[]',     -- 管理的部門（JSON 陣列）
+  employee_ids TEXT DEFAULT '[]',    -- 另外指定的員工（JSON 陣列）
+  active INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  last_login_at INTEGER
+);
+`);
+{
+  const lr = db.prepare('PRAGMA table_info(leave_requests)').all().map((c) => c.name);
+  if (!lr.includes('decided_by')) db.exec("ALTER TABLE leave_requests ADD COLUMN decided_by TEXT DEFAULT ''"); // 審核者姓名（主管姓名或「管理員」）
+  if (!lr.includes('decided_by_manager_id')) db.exec('ALTER TABLE leave_requests ADD COLUMN decided_by_manager_id INTEGER');
+  const al = db.prepare('PRAGMA table_info(audit_log)').all().map((c) => c.name);
+  if (!al.includes('actor')) db.exec("ALTER TABLE audit_log ADD COLUMN actor TEXT DEFAULT ''"); // 操作者（空白＝管理員）
+}
 db.exec(`
 CREATE TABLE IF NOT EXISTS payslip_sends (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -381,6 +404,12 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
   }
 }
 
+// 示範員工的部門（只補一次）
+if (getSetting('demo_depts_seeded') !== '1') {
+  const D = { 示範員工A: '門市部', 示範員工B: '門市部', 示範員工C: '倉儲部' };
+  for (const r of db.prepare("SELECT id, name FROM employees WHERE is_sample=1 AND (department IS NULL OR department='')").all()) if (D[r.name]) db.prepare('UPDATE employees SET department=? WHERE id=?').run(D[r.name], r.id);
+  setSetting('demo_depts_seeded', '1');
+}
 // 示範員工使用格式正確（檢查碼正確）的假身分證字號（只補一次；管理員清除後不會再補回）
 if (getSetting('demo_ids_seeded') !== '1') {
   const PII = require('./pii');

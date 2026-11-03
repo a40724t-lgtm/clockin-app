@@ -61,8 +61,12 @@ const fmtDur = (ms) => { const m = Math.round(ms / 60000); return `${Math.floor(
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s || '');
 
+// 稽核紀錄的操作者：依目前請求的登入身分（管理員／主管）自動帶入
+const { AsyncLocalStorage } = require('async_hooks');
+const actorStore = new AsyncLocalStorage();
 function audit(action, detail) {
-  db.prepare('INSERT INTO audit_log(at,action,detail) VALUES(?,?,?)').run(Date.now(), action, detail);
+  const a = actorStore.getStore();
+  db.prepare('INSERT INTO audit_log(at,action,detail,actor) VALUES(?,?,?,?)').run(Date.now(), action, detail, a ? a.actor : '');
 }
 
 // ---------- Session ----------
@@ -98,11 +102,41 @@ function requireEmployee(req, res, next) {
   req.employee = emp;
   next();
 }
-function requireAdmin(req, res, next) {
-  const s = getSession(cookie(req, 'admin_token') || bearer(req), 'admin');
-  if (!s) return res.status(401).json({ error: '請先登入管理後台' });
-  next();
+// ---------- 管理員（負責人）與主管 ----------
+const parseIds = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
+// 主管的團隊：所管部門的在職員工＋另外指定的員工
+function teamOf(m) {
+  const deps = parseIds(m.departments).map(String).filter(Boolean), ids = parseIds(m.employee_ids).map(Number);
+  const rows = db.prepare('SELECT id, department FROM employees WHERE active=1').all();
+  return new Set(rows.filter((e) => ids.includes(e.id) || (e.department && deps.includes(e.department))).map((e) => e.id));
 }
+function requireAdmin(req, res, next) {
+  const tok = cookie(req, 'admin_token') || bearer(req);
+  const s = getSession(tok, 'admin');
+  if (s) { req.role = 'owner'; req.actorName = '管理員'; return actorStore.run({ actor: '管理員' }, next); }
+  const ms = getSession(tok, 'manager');
+  if (ms) {
+    const m = db.prepare('SELECT * FROM managers WHERE id=? AND active=1').get(ms.employee_id);
+    if (!m) return res.status(401).json({ error: '主管帳號已停用，請洽管理員' });
+    req.role = 'manager'; req.manager = m; req.team = teamOf(m); req.actorName = m.name;
+    return actorStore.run({ actor: `主管 ${m.name}（${m.username}）` }, next);
+  }
+  return res.status(401).json({ error: '請先登入管理後台' });
+}
+// 主管只能使用的 API（其餘一律 403；資料範圍另在各 API 依團隊過濾）
+const MANAGER_ROUTES = [
+  ['GET', /^\/me$/], ['PUT', /^\/password$/],
+  ['GET', /^\/employees$/], ['GET', /^\/records$/], ['GET', /^\/leave-types$/],
+  ['GET', /^\/leaves$/], ['POST', /^\/leaves\/\d+\/(approve|reject)$/], ['GET', /^\/leaves\/\d+\/attachment$/],
+];
+function managerGuard(req, res, next) {
+  if (req.role !== 'manager') return next();
+  if (MANAGER_ROUTES.some(([m, re]) => m === req.method && re.test(req.path))) return next();
+  return res.status(403).json({ error: '主管帳號沒有這項權限' });
+}
+const ownerOnly = (req, res, next) => (req.role === 'owner' ? next() : res.status(403).json({ error: '只有管理員可以使用' }));
+// 主管：只能存取自己團隊的員工
+const inTeam = (req, empId) => req.role !== 'manager' || req.team.has(Number(empId));
 
 // 簡易防暴力破解：同一 IP + 對象 連續失敗 5 次鎖 5 分鐘
 const failures = new Map();
@@ -483,6 +517,19 @@ app.post('/api/punch', requireEmployee, (req, res) => {
 
 // ---------- 管理端 API ----------
 app.post('/api/admin/login', (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  if (username) {
+    // 主管登入：帳號＋密碼
+    const key = `mgr|${clientIp(req)}|${username.toLowerCase()}`;
+    if (checkLock(key)) return res.status(429).json({ error: '錯誤次數過多，請 5 分鐘後再試' });
+    const m = db.prepare('SELECT * FROM managers WHERE username=? AND active=1').get(username);
+    if (!m || !verifyPassword(String(req.body?.password || ''), m.password_hash)) { addFail(key); return res.status(401).json({ error: '帳號或密碼錯誤' }); }
+    failures.delete(key);
+    db.prepare('UPDATE managers SET last_login_at=? WHERE id=?').run(Date.now(), m.id);
+    const token = createSession('manager', m.id, 12 * 3600000);
+    res.setHeader('Set-Cookie', `admin_token=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${12 * 3600}`);
+    return res.json({ ok: true, role: 'manager' });
+  }
   const key = `admin|${clientIp(req)}`;
   if (checkLock(key)) return res.status(429).json({ error: '錯誤次數過多，請 5 分鐘後再試' });
   if (!verifyPassword(String(req.body?.password || ''), getSetting('admin_password'))) { addFail(key); return res.status(401).json({ error: '密碼錯誤' }); }
@@ -497,8 +544,18 @@ app.post('/api/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 app.use('/api/admin', requireAdmin);
+app.use('/api/admin', managerGuard);
 
-app.get('/api/admin/me', (req, res) => res.json({ ok: true, default_password: verifyPassword('admin1234', getSetting('admin_password')), settings: getSettings(), checks: getCheckSettings(), leave_pending: db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get().c }));
+app.get('/api/admin/me', (req, res) => {
+  if (req.role === 'manager') {
+    const ids = [...req.team];
+    const pending = ids.length ? db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND employee_id IN (${ids.map(() => '?').join(',')})`).get(...ids).c : 0;
+    const s = getSettings();
+    return res.json({ ok: true, role: 'manager', manager: { id: req.manager.id, name: req.manager.name, username: req.manager.username, departments: parseIds(req.manager.departments) }, team_size: ids.length,
+      settings: { company_name: s.company_name, work_start: s.work_start, standard_hours: s.standard_hours }, leave_pending: pending });
+  }
+  res.json({ ok: true, role: 'owner', default_password: verifyPassword('admin1234', getSetting('admin_password')), settings: getSettings(), checks: getCheckSettings(), leave_pending: db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get().c });
+});
 // 管理員目前連線的 IP（給「使用目前連線的 IP」按鈕與診斷用）
 app.get('/api/admin/my-ip', (req, res) => {
   const ip = clientIp(req);
@@ -570,7 +627,9 @@ app.get('/api/admin/overview', (req, res) => {
 // 員工管理
 app.get('/api/admin/employees', (req, res) => {
   // 身分證字號只回傳遮罩（例如 A12****789），不回傳明碼
-  res.json(db.prepare('SELECT id,name,pin,note,email,is_sample,created_at,national_id_enc FROM employees WHERE active=1 ORDER BY id').all().map(({ national_id_enc, ...e }) => {
+  // 主管只看到自己團隊的姓名與部門（不含 PIN、Email、身分證字號）
+  if (req.role === 'manager') return res.json(db.prepare('SELECT id,name,department FROM employees WHERE active=1 ORDER BY id').all().filter((e) => req.team.has(e.id)));
+  res.json(db.prepare('SELECT id,name,pin,note,email,department,is_sample,created_at,national_id_enc FROM employees WHERE active=1 ORDER BY id').all().map(({ national_id_enc, ...e }) => {
     const v = national_id_enc ? PII.tryDecrypt(national_id_enc) : null;
     return { ...e, has_national_id: !!v, national_id_masked: v ? PII.maskId(v) : '', national_id_error: national_id_enc && !v ? '無法解密（加密金鑰可能已更換），請重新輸入' : '' };
   }));
@@ -597,12 +656,70 @@ function validateEmp(body, id) {
   if (email && (email.length > 120 || !/^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(email))) return 'Email 格式錯誤';
   const dup = db.prepare('SELECT id FROM employees WHERE name=? AND active=1 AND id<>?').get(name, id || 0);
   if (dup) return '已有同名員工，請加上區別（例如 王小明-門市）';
+  if (String(body.department || '').trim().length > 20) return '部門名稱請在 20 字以內';
   return null;
 }
+const deptOf = (b) => String(b.department || '').trim().slice(0, 20);
+
+// ---------- 主管帳號（只有管理員可以管理） ----------
+function managerView(m) {
+  const team = teamOf(m);
+  return { id: m.id, name: m.name, username: m.username, departments: parseIds(m.departments), employee_ids: parseIds(m.employee_ids).map(Number), active: !!m.active,
+    team: db.prepare('SELECT id, name, department FROM employees WHERE active=1 ORDER BY id').all().filter((e) => team.has(e.id)),
+    created_text: fmtDateTime(m.created_at), last_login_text: m.last_login_at ? fmtDateTime(m.last_login_at) : '' };
+}
+function parseManager(b, id) {
+  const name = String(b.name || '').trim(), username = String(b.username || '').trim();
+  if (!name || name.length > 30) return { error: '請輸入主管姓名（30 字以內）' };
+  if (!/^[A-Za-z0-9._-]{3,30}$/.test(username)) return { error: '登入帳號需為 3～30 個英文字母、數字或 . _ -' };
+  if (db.prepare('SELECT id FROM managers WHERE username=? AND id<>?').get(username, id || 0)) return { error: '這個登入帳號已有人使用' };
+  const pw = String(b.password || '');
+  if ((!id || pw) && pw.length < 8) return { error: '密碼至少 8 個字元' };
+  const departments = [...new Set((Array.isArray(b.departments) ? b.departments : []).map((x) => String(x).trim()).filter(Boolean))].slice(0, 30);
+  const valid = new Set(db.prepare('SELECT id FROM employees WHERE active=1').all().map((e) => e.id));
+  const employee_ids = [...new Set((Array.isArray(b.employee_ids) ? b.employee_ids : []).map(Number))];
+  if (employee_ids.some((x) => !valid.has(x))) return { error: '指定的員工不存在' };
+  if (!departments.length && !employee_ids.length) return { error: '請至少指定一個部門或一位員工' };
+  return { name, username, pw, departments, employee_ids };
+}
+app.get('/api/admin/managers', ownerOnly, (req, res) => {
+  res.json({ managers: db.prepare('SELECT * FROM managers ORDER BY active DESC, id').all().map(managerView),
+    departments: db.prepare("SELECT DISTINCT department d FROM employees WHERE active=1 AND department<>'' ORDER BY department").all().map((r) => r.d) });
+});
+app.post('/api/admin/managers', ownerOnly, (req, res) => {
+  const v = parseManager(req.body || {}); if (v.error) return res.status(400).json({ error: v.error });
+  const r = db.prepare('INSERT INTO managers(name,username,password_hash,departments,employee_ids,active,created_at) VALUES(?,?,?,?,?,1,?)')
+    .run(v.name, v.username, hashPassword(v.pw), JSON.stringify(v.departments), JSON.stringify(v.employee_ids), Date.now());
+  const m = db.prepare('SELECT * FROM managers WHERE id=?').get(r.lastInsertRowid);
+  audit('新增主管', `新增主管「${v.name}」（帳號 ${v.username}）｜管理：${[...v.departments.map((d) => `部門 ${d}`), ...managerView(m).team.filter((e) => v.employee_ids.includes(e.id)).map((e) => e.name)].join('、')}`);
+  res.json({ ok: true, manager: managerView(m) });
+});
+app.put('/api/admin/managers/:id', ownerOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const old = db.prepare('SELECT * FROM managers WHERE id=?').get(id);
+  if (!old) return res.status(404).json({ error: '找不到這個主管帳號' });
+  const v = parseManager(req.body || {}, id); if (v.error) return res.status(400).json({ error: v.error });
+  const active = req.body.active === undefined ? old.active : (req.body.active ? 1 : 0);
+  db.prepare('UPDATE managers SET name=?, username=?, departments=?, employee_ids=?, active=? WHERE id=?').run(v.name, v.username, JSON.stringify(v.departments), JSON.stringify(v.employee_ids), active, id);
+  if (v.pw) db.prepare('UPDATE managers SET password_hash=? WHERE id=?').run(hashPassword(v.pw), id);
+  // 重設密碼、停用或更改帳號時，讓目前的登入失效
+  if (v.pw || !active || v.username !== old.username) db.prepare("DELETE FROM sessions WHERE kind='manager' AND employee_id=?").run(id);
+  audit('修改主管', `修改主管「${old.name}」${old.name !== v.name ? `→「${v.name}」` : ''}${v.pw ? '（已重設密碼）' : ''}${active !== old.active ? (active ? '（已啟用）' : '（已停用）') : ''}｜管理：${v.departments.map((d) => `部門 ${d}`).join('、') || '—'}${v.employee_ids.length ? `＋指定 ${v.employee_ids.length} 位員工` : ''}`);
+  res.json({ ok: true, manager: managerView(db.prepare('SELECT * FROM managers WHERE id=?').get(id)) });
+});
+app.delete('/api/admin/managers/:id', ownerOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const m = db.prepare('SELECT * FROM managers WHERE id=?').get(id);
+  if (!m) return res.status(404).json({ error: '找不到這個主管帳號' });
+  db.prepare("DELETE FROM sessions WHERE kind='manager' AND employee_id=?").run(id);
+  db.prepare('DELETE FROM managers WHERE id=?').run(id); // 已審核的請假仍保留審核者姓名
+  audit('刪除主管', `刪除主管「${m.name}」（帳號 ${m.username}）`);
+  res.json({ ok: true });
+});
 app.post('/api/admin/employees', (req, res) => {
   const err = validateEmp(req.body || {}); if (err) return res.status(400).json({ error: err });
   const nid = parseNationalId(req.body); if (nid.error) return res.status(400).json({ error: nid.error });
-  const r = db.prepare('INSERT INTO employees(name,pin,note,email,national_id_enc,created_at) VALUES(?,?,?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), String(req.body.email || '').trim(), nid.value ? PII.encrypt(nid.value) : '', Date.now());
+  const r = db.prepare('INSERT INTO employees(name,pin,note,email,department,national_id_enc,created_at) VALUES(?,?,?,?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), String(req.body.email || '').trim(), deptOf(req.body), nid.value ? PII.encrypt(nid.value) : '', Date.now());
   audit('新增員工', `新增員工「${req.body.name.trim()}」${nid.value ? '（已登錄身分證字號）' : ''}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
@@ -615,11 +732,12 @@ app.put('/api/admin/employees/:id', (req, res) => {
   const email = String(req.body.email || '').trim();
   const oldId = emp.national_id_enc ? PII.tryDecrypt(emp.national_id_enc) : null;
   const idChanged = nid.value !== undefined && nid.value !== (oldId || '');
-  db.prepare('UPDATE employees SET name=?, pin=?, note=?, email=? WHERE id=?').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), email, id);
+  const dept = req.body.department === undefined ? (emp.department || '') : deptOf(req.body);
+  db.prepare('UPDATE employees SET name=?, pin=?, note=?, email=?, department=? WHERE id=?').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), email, dept, id);
   if (idChanged) db.prepare('UPDATE employees SET national_id_enc=? WHERE id=?').run(nid.value ? PII.encrypt(nid.value) : '', id);
   if (String(req.body.pin).trim() !== emp.pin) db.prepare("DELETE FROM sessions WHERE kind='employee' AND employee_id=?").run(id);
   // 稽核紀錄不寫入身分證字號本身
-  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}${idChanged ? (nid.value ? (oldId ? '（已更新身分證字號）' : '（已登錄身分證字號）') : '（已清除身分證字號）') : ''}`);
+  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}${dept !== (emp.department || '') ? `（部門：${dept || '已清除'}）` : ''}${idChanged ? (nid.value ? (oldId ? '（已更新身分證字號）' : '（已登錄身分證字號）') : '（已清除身分證字號）') : ''}`);
   res.json({ ok: true });
 });
 // 只修改 Email（寄送薪資單視窗中直接編輯）
@@ -654,8 +772,10 @@ function rangeFromQuery(q) {
 }
 app.get('/api/admin/records', (req, res) => {
   const { from, to } = rangeFromQuery(req.query);
-  const punches = loadPunches(from, to, req.query.employee_id || null);
-  const daily = computeDaily(punches, getSettings(), loadLeaves(from, to, req.query.employee_id || null), { from, to }, loadArrangements(from, to, req.query.employee_id || null));
+  if (req.query.employee_id && !inTeam(req, req.query.employee_id)) return res.status(403).json({ error: '這位員工不在您的團隊' });
+  const mine = (x) => inTeam(req, x.employee_id);
+  const punches = loadPunches(from, to, req.query.employee_id || null).filter(mine);
+  const daily = computeDaily(punches, getSettings(), loadLeaves(from, to, req.query.employee_id || null).filter(mine), { from, to }, loadArrangements(from, to, req.query.employee_id || null).filter(mine)).filter(mine);
   const totals = {
     offsite_count: daily.reduce((s, r) => s + r.offsite_count, 0),
     days: daily.filter((r) => !r.leave_only).length,
@@ -665,7 +785,7 @@ app.get('/api/admin/records', (req, res) => {
     late_count: daily.filter((r) => r.late).length,
     issue_count: daily.filter((r) => r.issues.length).length,
   };
-  res.json({ from, to, daily, punches: punches.slice().reverse().map(punchView), totals, blocked: loadBlocked(from, to, req.query.employee_id || null).reverse() });
+  res.json({ from, to, daily, punches: punches.slice().reverse().map(punchView), totals, blocked: loadBlocked(from, to, req.query.employee_id || null).filter(mine).reverse() });
 });
 
 function loadBlocked(from, to, employeeId) {
@@ -737,6 +857,13 @@ app.put('/api/admin/settings', (req, res) => {
 });
 app.put('/api/admin/password', (req, res) => {
   const { old_password, new_password } = req.body || {};
+  if (req.role === 'manager') {
+    if (!verifyPassword(String(old_password || ''), req.manager.password_hash)) return res.status(400).json({ error: '目前密碼錯誤' });
+    if (String(new_password || '').length < 8) return res.status(400).json({ error: '新密碼至少 8 個字元' });
+    db.prepare('UPDATE managers SET password_hash=? WHERE id=?').run(hashPassword(String(new_password)), req.manager.id);
+    audit('變更密碼', `主管「${req.manager.name}」變更自己的密碼`);
+    return res.json({ ok: true });
+  }
   if (!verifyPassword(String(old_password || ''), getSetting('admin_password'))) return res.status(400).json({ error: '目前密碼錯誤' });
   if (String(new_password || '').length < 6) return res.status(400).json({ error: '新密碼至少 6 個字元' });
   setSetting('admin_password', hashPassword(String(new_password)));
@@ -874,7 +1001,7 @@ function leaveView(l) {
       days: dates.map((d) => ({ date: d, hours: 0, from: fmtTime(w.ws), to: fmtTime(w.we), full: true })),
       reason: l.reason, has_attachment: !!l.attachment, attachment_name: l.attachment_name || '', attachment_mime: l.attachment_mime || '',
       status: l.status, status_text: STATUS_TEXT[l.status], admin_comment: l.admin_comment || '',
-      created_text: fmtDateTime(l.created_at), decided_text: l.decided_at ? fmtDateTime(l.decided_at) : '',
+      created_text: fmtDateTime(l.created_at), decided_text: l.decided_at ? fmtDateTime(l.decided_at) : '', decided_by: l.decided_at ? (l.decided_by || '管理員') : '',
     };
   }
   return {
@@ -887,7 +1014,7 @@ function leaveView(l) {
     days: L.calcLeave(l.start_ts, l.end_ts, s).days.map((d) => ({ date: d.date, hours: d.hours, from: d.from, to: d.to, full: d.full })),
     reason: l.reason, has_attachment: !!l.attachment, attachment_name: l.attachment_name || '', attachment_mime: l.attachment_mime || '',
     status: l.status, status_text: STATUS_TEXT[l.status], admin_comment: l.admin_comment || '',
-    created_text: fmtDateTime(l.created_at), decided_text: l.decided_at ? fmtDateTime(l.decided_at) : '',
+    created_text: fmtDateTime(l.created_at), decided_text: l.decided_at ? fmtDateTime(l.decided_at) : '', decided_by: l.decided_at ? (l.decided_by || '管理員') : '',
   };
 }
 function yearRange() { const y = todayStr().slice(0, 4); return { y, start: taipeiToEpoch(`${y}-01-01`, '00:00'), end: taipeiToEpoch(`${Number(y) + 1}-01-01`, '00:00') }; }
@@ -1039,6 +1166,8 @@ app.get('/api/admin/leaves', (req, res) => {
   if (isDate(q.to)) { sql += ' AND l.start_ts<?'; args.push(taipeiToEpoch(q.to, '00:00') + DAY); }
   if (q.employee_id) { sql += ' AND l.employee_id=?'; args.push(Number(q.employee_id)); }
   if (q.type_id) { sql += ' AND l.type_id=?'; args.push(Number(q.type_id)); }
+  let teamSql = '';
+  if (req.role === 'manager') { const ids = [...req.team]; teamSql = ids.length ? ` AND l.employee_id IN (${ids.join(',')})` : ' AND 0'; sql += teamSql; }
   sql += q.status === 'pending' ? ' ORDER BY l.start_ts ASC' : ' ORDER BY l.start_ts DESC';
   const rows = db.prepare(sql + ' LIMIT 500').all(...args).map((l) => {
     const v = leaveView(l);
@@ -1046,11 +1175,11 @@ app.get('/api/admin/leaves', (req, res) => {
     return v;
   });
   const holidays = isDate(q.from) && isDate(q.to) ? HOL.between(q.from, q.to).filter((h) => h.off || h.kind === 'swap_out').map((h) => ({ date: h.date, ...holidayView(h) })) : [];
-  res.json({ leaves: rows, holidays, pending: db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get().c });
+  res.json({ leaves: rows, holidays, pending: db.prepare(`SELECT COUNT(*) c FROM leave_requests l WHERE l.status='pending'${teamSql}`).get().c });
 });
 function decide(req, res, status) {
   const l = db.prepare('SELECT l.*, e.name FROM leave_requests l JOIN employees e ON e.id=l.employee_id WHERE l.id=?').get(Number(req.params.id));
-  if (!l) return res.status(404).json({ error: '找不到這筆請假' });
+  if (!l || !inTeam(req, l.employee_id)) return res.status(404).json({ error: '找不到這筆請假' });
   if (l.status !== 'pending') return res.status(400).json({ error: `這筆請假已${STATUS_TEXT[l.status].replace('已', '')}，無法再審核` });
   const comment = String(req.body?.comment || '').trim().slice(0, 300);
   if (status === 'approved') {
@@ -1061,9 +1190,9 @@ function decide(req, res, status) {
       if (l.hours > bal.remaining_hours + 1e-9) return res.status(400).json({ error: `${l.name} 的特休剩餘 ${bal.remaining_hours} 小時，不足 ${l.hours} 小時。請先到「特休額度」調整，或退回此申請。` });
     }
   }
-  db.prepare('UPDATE leave_requests SET status=?, admin_comment=?, decided_at=? WHERE id=?').run(status, comment, Date.now(), l.id);
+  db.prepare('UPDATE leave_requests SET status=?, admin_comment=?, decided_at=?, decided_by=?, decided_by_manager_id=? WHERE id=?').run(status, comment, Date.now(), req.actorName || '管理員', req.role === 'manager' ? req.manager.id : null, l.id);
   const bal = l.deduct_annual && status === 'approved' ? annualBalance(l.employee_id) : null;
-  audit(status === 'approved' ? '核准請假' : '退回請假', `${l.name} ${l.type_name} ${leaveView(l).label}${l.kind === 'leave' ? `（${l.hours} 小時）` : `${l.destination ? `（${l.destination}）` : ''}・不扣假`}${comment ? `｜意見：${comment}` : ''}${bal ? `｜特休剩餘 ${bal.remaining_hours} 小時` : ''}`);
+  audit(status === 'approved' ? '核准請假' : '退回請假', `${l.name} ${l.type_name} ${leaveView(l).label}${l.kind === 'leave' ? `（${l.hours} 小時）` : `${l.destination ? `（${l.destination}）` : ''}・不扣假`}${comment ? `｜意見：${comment}` : ''}${bal ? `｜特休剩餘 ${bal.remaining_hours} 小時` : ''}｜審核：${req.actorName || '管理員'}`);
   res.json({ ok: true, balance: bal });
 }
 app.post('/api/admin/leaves/:id/approve', (req, res) => decide(req, res, 'approved'));
@@ -1080,7 +1209,7 @@ app.post('/api/admin/leaves/:id/revoke', (req, res) => {
   audit('撤銷請假', `${l.name} ${l.type_name} ${leaveView(l).label}${l.kind === 'leave' ? `（${l.hours} 小時）` : ''}｜原因：${reason}${bal ? `｜特休剩餘 ${bal.remaining_hours} 小時` : ''}`);
   res.json({ ok: true, balance: bal });
 });
-app.get('/api/admin/leaves/:id/attachment', (req, res) => sendAttachment(res, db.prepare('SELECT * FROM leave_requests WHERE id=?').get(Number(req.params.id))));
+app.get('/api/admin/leaves/:id/attachment', (req, res) => { const l = db.prepare('SELECT * FROM leave_requests WHERE id=?').get(Number(req.params.id)); sendAttachment(res, l && inTeam(req, l.employee_id) ? l : null); });
 
 // 假別
 app.get('/api/admin/leave-types', (req, res) => res.json(db.prepare('SELECT * FROM leave_types ORDER BY sort, id').all()));

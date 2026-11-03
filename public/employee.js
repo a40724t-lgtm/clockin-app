@@ -394,8 +394,8 @@ function renderLeave() {
       </div>
       ${l.destination ? `<div class="lv-dest">${icon('navigation', 14)}${esc(l.destination)}</div>` : ''}
       <div class="lv-reason">${esc(l.reason)}</div>
-      ${l.admin_comment ? `<div class="lv-comment ${l.status === 'rejected' ? 'rej' : ''}">${icon('message', 16)}<span><b>管理員：</b>${esc(l.admin_comment)}</span></div>` : ''}
-      <div class="lv-foot"><span class="meta">申請於 ${esc(l.created_text)}</span><span class="grow"></span>
+      ${l.admin_comment ? `<div class="lv-comment ${l.status === 'rejected' ? 'rej' : ''}">${icon('message', 16)}<span><b>${esc(l.decided_by || '管理員')}：</b>${esc(l.admin_comment)}</span></div>` : ''}
+      <div class="lv-foot"><span class="meta">申請於 ${esc(l.created_text)}${l.decided_by && (l.status === 'approved' || l.status === 'rejected') ? `<br>${l.status === 'approved' ? '核准' : '退回'}：${esc(l.decided_by)}・${esc(l.decided_text)}` : ''}</span><span class="grow"></span>
         ${l.has_attachment ? `<button class="btn ghost sm" data-att="${l.id}">${icon('paperclip', 16)}查看附件</button>` : ''}
         ${l.status === 'pending' ? `<button class="btn danger-ghost sm" data-cancel="${l.id}">${icon('undo', 16)}取消申請</button>` : ''}
       </div>
