@@ -145,6 +145,8 @@ if (!ltCols.includes('pay_ratio')) {
 // 時薪人員「國定假日照給」時數：原約定平日每日工時（NULL＝依標準工時；0＝平日無固定排班，國定假日未出勤不給薪）
 if (!empCols.includes('holiday_hours')) db.exec('ALTER TABLE employees ADD COLUMN holiday_hours REAL');
 if (!empCols.includes('email')) db.exec("ALTER TABLE employees ADD COLUMN email TEXT DEFAULT ''");
+// 身分證字號（PDF 薪資單開啟密碼）：AES-256-GCM 加密後儲存，見 pii.js
+if (!empCols.includes('national_id_enc')) db.exec("ALTER TABLE employees ADD COLUMN national_id_enc TEXT DEFAULT ''");
 db.exec(`
 CREATE TABLE IF NOT EXISTS payslip_sends (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,10 +205,12 @@ if (!getSetting('lunch_enabled')) setSetting('lunch_enabled', '1');
 // 打卡地點限制（預設全部關閉）
 const DEFAULT_MAIL_BODY = '{姓名} 您好：\n\n附件為您 {月份} 的薪資單（PDF）。\n{密碼說明}\n\n如對內容有任何疑問，請直接回覆此信或與我們聯絡。\n\n※ 試算僅供參考，請以會計／勞動法規為準。\n\n{公司}';
 const defaults = { smtp_host: '', smtp_port: '465', smtp_secure: '1', smtp_user: '', smtp_pass: '', smtp_from_name: '', smtp_from_addr: '',
-  mail_subject: '【{公司}】{月份} 薪資單', mail_body: DEFAULT_MAIL_BODY, pdf_password_mode: 'pin', pdf_password_fixed: '',
+  mail_subject: '【{公司}】{月份} 薪資單', mail_body: DEFAULT_MAIL_BODY, pdf_password_mode: 'id', pdf_password_fixed: '',
   payroll_late_deduct: '0', payroll_ot_unit: '1', payroll_clip_early: '1', net_check_enabled: '0', net_allowlist: '', loc_check_enabled: '0', loc_lat: '', loc_lng: '', loc_radius: '150', loc_max_accuracy: '100',
   out_rule: 'relaxed', out_radius: '300' }; // 下班打卡規則：relaxed 放寬（公司網路或公司 300 公尺內，否則標記異地打卡）／strict 同上班
 for (const [k, v] of Object.entries(defaults)) if (getSetting(k) === undefined) setSetting(k, v);
+// PDF 密碼由 4 位數 PIN 改為身分證字號（舊設定 pin 自動改為 id）
+if (getSetting('pdf_password_mode') === 'pin') setSetting('pdf_password_mode', 'id');
 if (!getSetting('company_name')) setSetting('company_name', '我的公司');
 
 // 示範資料（僅在第一次啟動、沒有任何員工時建立）
@@ -375,6 +379,15 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
     // 示範調整項：B 上個月績效獎金
     db.prepare('INSERT INTO payroll_adjustments(month,employee_id,kind,label,amount,note,created_at) VALUES(?,?,?,?,?,?,?)').run(prevMonth, ids[1], 'add', '績效獎金', 2000, '示範：第三季專案達標', now);
   }
+}
+
+// 示範員工使用格式正確（檢查碼正確）的假身分證字號（只補一次；管理員清除後不會再補回）
+if (getSetting('demo_ids_seeded') !== '1') {
+  const PII = require('./pii');
+  const FAKE = { 示範員工A: PII.fakeId('A', '12345678'), 示範員工B: PII.fakeId('B', '22345678'), 示範員工C: PII.fakeId('E', '18000000') };
+  const rows = db.prepare("SELECT id, name FROM employees WHERE is_sample=1 AND (national_id_enc IS NULL OR national_id_enc='')").all();
+  for (const r of rows) if (FAKE[r.name]) db.prepare('UPDATE employees SET national_id_enc=? WHERE id=?').run(PII.encrypt(FAKE[r.name]), r.id);
+  setSetting('demo_ids_seeded', '1');
 }
 
 module.exports = { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET };

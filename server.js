@@ -11,6 +11,7 @@ const { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, has
 const app = express();
 // 國定假日行事曆（勞基法第 37 條；資料來源見 holidays.js）
 const HOL = require('./holidays')(db);
+const PII = require('./pii');
 L.setOffWeekday(HOL.isOffWeekday);
 const holidayView = (h) => (h ? { name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend, note: h.note || '' } : null);
 // 畫面上要標示的日別（放假日，或調移上班日）
@@ -568,8 +569,24 @@ app.get('/api/admin/overview', (req, res) => {
 
 // 員工管理
 app.get('/api/admin/employees', (req, res) => {
-  res.json(db.prepare('SELECT id,name,pin,note,email,is_sample,created_at FROM employees WHERE active=1 ORDER BY id').all());
+  // 身分證字號只回傳遮罩（例如 A12****789），不回傳明碼
+  res.json(db.prepare('SELECT id,name,pin,note,email,is_sample,created_at,national_id_enc FROM employees WHERE active=1 ORDER BY id').all().map(({ national_id_enc, ...e }) => {
+    const v = national_id_enc ? PII.tryDecrypt(national_id_enc) : null;
+    return { ...e, has_national_id: !!v, national_id_masked: v ? PII.maskId(v) : '', national_id_error: national_id_enc && !v ? '無法解密（加密金鑰可能已更換），請重新輸入' : '' };
+  }));
 });
+// 驗證身分證字號並檢查是否與其他在職員工重複；回傳 { error } 或 { value }（undefined＝不變更）
+function parseNationalId(body, id) {
+  if (body.clear_national_id) return { value: '' };
+  const raw = String(body.national_id ?? '').trim();
+  if (!raw) return { value: undefined };
+  const r = PII.validateNationalId(raw);
+  if (!r.ok) return { error: r.error };
+  const others = db.prepare("SELECT id, name, national_id_enc FROM employees WHERE active=1 AND id<>? AND national_id_enc<>''").all(id || 0);
+  const dup = others.find((o) => PII.tryDecrypt(o.national_id_enc) === r.value);
+  if (dup) return { error: `這個身分證字號已登錄在「${dup.name}」，請確認是否輸入錯誤` };
+  return { value: r.value };
+}
 function validateEmp(body, id) {
   const name = String(body.name || '').trim();
   const pin = String(body.pin || '').trim();
@@ -584,8 +601,9 @@ function validateEmp(body, id) {
 }
 app.post('/api/admin/employees', (req, res) => {
   const err = validateEmp(req.body || {}); if (err) return res.status(400).json({ error: err });
-  const r = db.prepare('INSERT INTO employees(name,pin,note,email,created_at) VALUES(?,?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), String(req.body.email || '').trim(), Date.now());
-  audit('新增員工', `新增員工「${req.body.name.trim()}」`);
+  const nid = parseNationalId(req.body); if (nid.error) return res.status(400).json({ error: nid.error });
+  const r = db.prepare('INSERT INTO employees(name,pin,note,email,national_id_enc,created_at) VALUES(?,?,?,?,?,?)').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), String(req.body.email || '').trim(), nid.value ? PII.encrypt(nid.value) : '', Date.now());
+  audit('新增員工', `新增員工「${req.body.name.trim()}」${nid.value ? '（已登錄身分證字號）' : ''}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.put('/api/admin/employees/:id', (req, res) => {
@@ -593,10 +611,15 @@ app.put('/api/admin/employees/:id', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(id);
   if (!emp) return res.status(404).json({ error: '找不到員工' });
   const err = validateEmp(req.body || {}, id); if (err) return res.status(400).json({ error: err });
+  const nid = parseNationalId(req.body, id); if (nid.error) return res.status(400).json({ error: nid.error });
   const email = String(req.body.email || '').trim();
+  const oldId = emp.national_id_enc ? PII.tryDecrypt(emp.national_id_enc) : null;
+  const idChanged = nid.value !== undefined && nid.value !== (oldId || '');
   db.prepare('UPDATE employees SET name=?, pin=?, note=?, email=? WHERE id=?').run(req.body.name.trim(), String(req.body.pin).trim(), String(req.body.note || ''), email, id);
+  if (idChanged) db.prepare('UPDATE employees SET national_id_enc=? WHERE id=?').run(nid.value ? PII.encrypt(nid.value) : '', id);
   if (String(req.body.pin).trim() !== emp.pin) db.prepare("DELETE FROM sessions WHERE kind='employee' AND employee_id=?").run(id);
-  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}`);
+  // 稽核紀錄不寫入身分證字號本身
+  audit('修改員工', `修改員工「${emp.name}」${emp.name !== req.body.name.trim() ? `→「${req.body.name.trim()}」` : ''}${String(req.body.pin).trim() !== emp.pin ? '（已變更 PIN）' : ''}${email !== (emp.email || '') ? `（Email：${email || '已清除'}）` : ''}${idChanged ? (nid.value ? (oldId ? '（已更新身分證字號）' : '（已登錄身分證字號）') : '（已清除身分證字號）') : ''}`);
   res.json({ ok: true });
 });
 // 只修改 Email（寄送薪資單視窗中直接編輯）

@@ -2,15 +2,19 @@
 const nodemailer = require('nodemailer');
 const { buildPayslipPdf, payslipFileName } = require('./payslip-pdf');
 const { makeZip } = require('./zip');
+const PII = require('./pii');
 
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
 const monthText = (m) => { const [y, mm] = m.split('-').map(Number); return `${y} 年 ${mm} 月`; };
 const EMAIL_RE = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/;
 // RFC 2606 保留給測試／示範的網域：系統不會真的寄出
 const isDemoEmail = (e) => /@(.+\.)?(example\.(com|net|org)|[^@]*\.(example|test|invalid|localhost))$/i.test(String(e || '').trim());
+// PDF 密碼模式：id 身分證字號（預設）／fixed 固定密碼／none 不加密（舊的 pin 模式已移除，啟動時自動改為 id）
+const PW_MODES = ['none', 'id', 'fixed'];
+const NO_ID_NOTE = '尚未登錄身分證字號，無法加密薪資單，請到「員工管理」補上';
 const PASS_TEXT = {
   none: '',
-  pin: '為保護您的個人資料，PDF 已加密，開啟密碼為您的打卡 PIN 碼（4 位數字）。',
+  id: '為保護您的個人資料，PDF 已加密，開啟密碼為您的身分證字號（英文大寫，例如 A123456789）。',
   fixed: '為保護您的個人資料，PDF 已加密，開啟密碼請洽公司管理員。',
 };
 
@@ -37,7 +41,7 @@ module.exports = function registerPayslipMail(ctx) {
     };
   }
   function mailSettings() {
-    const mode = ['none', 'pin', 'fixed'].includes(getSetting('pdf_password_mode')) ? getSetting('pdf_password_mode') : 'pin';
+    const mode = PW_MODES.includes(getSetting('pdf_password_mode')) ? getSetting('pdf_password_mode') : 'id';
     return { subject: getSetting('mail_subject') || '【{公司}】{月份} 薪資單', body: getSetting('mail_body') || DEFAULT_MAIL_BODY, pdf_password_mode: mode, pdf_password_fixed: getSetting('pdf_password_fixed') || '' };
   }
   function publicSmtp() {
@@ -65,15 +69,27 @@ module.exports = function registerPayslipMail(ctx) {
   const fill = (tpl, vars) => String(tpl || '').replace(/\{(姓名|月份|公司|密碼說明|實發金額)\}/g, (_, k) => vars[k] ?? '');
   const fromHeader = (c) => (c.from_name ? { name: c.from_name, address: c.from_addr } : c.from_addr);
 
-  function pdfPassword(emp) {
+  const nationalIdOf = (empId) => {
+    const row = db.prepare('SELECT national_id_enc FROM employees WHERE id=?').get(empId);
+    const v = row && row.national_id_enc ? PII.tryDecrypt(row.national_id_enc) : null;
+    return v && PII.validateNationalId(v).ok ? v.toUpperCase() : null;
+  };
+  // 回傳 PDF 開啟密碼；需要加密卻沒有密碼時丟出錯誤（絕不退回用 PIN 或不加密）
+  function pdfPassword(empId) {
     const m = mailSettings();
-    if (m.pdf_password_mode === 'pin') return emp && emp.pin ? String(emp.pin) : null;
-    if (m.pdf_password_mode === 'fixed') return m.pdf_password_fixed || null;
+    if (m.pdf_password_mode === 'id') {
+      const v = nationalIdOf(empId);
+      if (!v) { const err = new Error(NO_ID_NOTE); err.code = 'NO_NATIONAL_ID'; throw err; }
+      return v;
+    }
+    if (m.pdf_password_mode === 'fixed') {
+      if (!m.pdf_password_fixed) { const err = new Error('尚未設定 PDF 固定密碼'); err.code = 'NO_FIXED_PASSWORD'; throw err; }
+      return m.pdf_password_fixed;
+    }
     return null;
   }
   async function pdfFor(p, e, protect) {
-    const emp = db.prepare('SELECT id, pin FROM employees WHERE id=?').get(e.id);
-    return buildPayslipPdf(p, e, { password: protect ? pdfPassword(emp) : null, generated_text: fmtDateTime(Date.now()) });
+    return buildPayslipPdf(p, e, { password: protect ? pdfPassword(e.id) : null, generated_text: fmtDateTime(Date.now()) });
   }
   function lastSends(month) {
     const rows = db.prepare('SELECT * FROM payslip_sends WHERE month=? ORDER BY id').all(month);
@@ -95,7 +111,7 @@ module.exports = function registerPayslipMail(ctx) {
     const b = req.body || {};
     const port = Number(b.port);
     const subject = String(b.subject ?? '').trim(), body = String(b.body ?? '');
-    const mode = ['none', 'pin', 'fixed'].includes(b.pdf_password_mode) ? b.pdf_password_mode : 'pin';
+    const mode = PW_MODES.includes(b.pdf_password_mode) ? b.pdf_password_mode : 'id';
     const fromAddr = String(b.from_addr || '').trim();
     if (!envMode()) {
       if (b.host && !/^[a-z0-9.-]+$/i.test(String(b.host).trim())) return res.status(400).json({ error: 'SMTP 主機名稱格式錯誤' });
@@ -118,7 +134,7 @@ module.exports = function registerPayslipMail(ctx) {
     setSetting('smtp_from_name', String(b.from_name || '').trim().slice(0, 60)); setSetting('smtp_from_addr', fromAddr);
     setSetting('mail_subject', subject); setSetting('mail_body', body); setSetting('pdf_password_mode', mode);
     if (mode === 'fixed' && String(b.pdf_password_fixed || '').trim()) setSetting('pdf_password_fixed', String(b.pdf_password_fixed).trim());
-    audit('修改寄信設定', `SMTP ${envMode() ? '（使用環境變數）' : `${String(b.host || '').trim() || '未設定'}:${port}${b.secure ? ' SSL' : ''}`}｜寄件者 ${fromAddr || '未設定'}｜PDF 密碼：${{ none: '不加密', pin: '員工 PIN 碼', fixed: '固定密碼' }[mode]}`);
+    audit('修改寄信設定', `SMTP ${envMode() ? '（使用環境變數）' : `${String(b.host || '').trim() || '未設定'}:${port}${b.secure ? ' SSL' : ''}`}｜寄件者 ${fromAddr || '未設定'}｜PDF 密碼：${{ none: '不加密', id: '員工身分證字號', fixed: '固定密碼' }[mode]}`);
     res.json({ ok: true, smtp: publicSmtp() });
   });
   // 測試連線：只做 SMTP 連線＋（若有帳密）登入檢查，不寄出任何信件。可帶入尚未儲存的表單值；auth=false 只測試連接埠
@@ -164,7 +180,8 @@ module.exports = function registerPayslipMail(ctx) {
     const e = p.employees.find((x) => x.id === Number(req.params.id));
     if (!e) return res.status(404).json({ error: '這位員工本月沒有薪資資料' });
     // 管理員下載的檔案不加密（公司留存用）；寄給員工與員工自行下載的檔案依設定加密
-    const buf = await pdfFor(p, e, req.query.protect === '1');
+    let buf;
+    try { buf = await pdfFor(p, e, req.query.protect === '1'); } catch (err) { if (err.code) return res.status(409).json({ error: `${e.name}：${err.message}` }); throw err; }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${req.query.inline ? 'inline' : 'attachment'}; filename="payslip-${month}-${e.id}.pdf"; filename*=UTF-8''${encodeURIComponent(payslipFileName(month, e.name))}`);
     res.end(buf);
@@ -185,15 +202,18 @@ module.exports = function registerPayslipMail(ctx) {
   // ---------- 寄送 ----------
   function recipients(month, p) {
     const sends = lastSends(month);
+    const idMode = mailSettings().pdf_password_mode === 'id';
     return p.employees.map((e) => {
       const row = db.prepare('SELECT email, active FROM employees WHERE id=?').get(e.id) || {};
       const email = String(row.email || '').trim();
       const s = sends[e.id];
       let state = 'ready', note = '';
+      const noId = idMode && !nationalIdOf(e.id);
       if (!email) { state = 'no_email'; note = '未填 Email，請到「員工管理」補上'; }
       else if (!EMAIL_RE.test(email)) { state = 'bad_email'; note = 'Email 格式錯誤'; }
       else if (isDemoEmail(email)) { state = 'demo'; note = '示範用保留網域，不會寄出'; }
-      return { id: e.id, name: e.name, is_sample: !!e.is_sample, net: e.net, email, state, note, sent_count: s ? s.sent_count : 0, last_sent: s ? s.last_sent : null, last: s ? s.last : null };
+      if (noId && (state === 'ready' || state === 'demo')) { state = 'no_id'; note = NO_ID_NOTE; }
+      return { id: e.id, name: e.name, is_sample: !!e.is_sample, net: e.net, email, state, note, no_national_id: noId, sent_count: s ? s.sent_count : 0, last_sent: s ? s.last_sent : null, last: s ? s.last : null };
     });
   }
   app.get('/api/admin/payroll/:month/sends', (req, res) => {
@@ -261,7 +281,7 @@ module.exports = function registerPayslipMail(ctx) {
       const e = JSON.parse(r.snapshot).employees.find((x) => x.id === req.employee.id);
       if (e) list.push({ month: r.month, label: monthText(r.month), net: e.net, confirmed_text: fmtDateTime(r.confirmed_at) });
     }
-    res.json({ list, protected: mailSettings().pdf_password_mode !== 'none', password_hint: { none: '', pin: '開啟密碼為您的 PIN 碼', fixed: '開啟密碼請洽管理員' }[mailSettings().pdf_password_mode] });
+    res.json({ list, protected: mailSettings().pdf_password_mode !== 'none', password_hint: { none: '', id: '開啟密碼為您的身分證字號（英文大寫）', fixed: '開啟密碼請洽管理員' }[mailSettings().pdf_password_mode] });
   });
   app.get('/api/payslips/:month.pdf', requireEmployee, async (req, res) => {
     const month = req.params.month;
@@ -271,7 +291,8 @@ module.exports = function registerPayslipMail(ctx) {
     const p = getPayroll(month);
     const e = p.employees.find((x) => x.id === req.employee.id);
     if (!e) return res.status(404).json({ error: '找不到您這個月的薪資單' });
-    const buf = await pdfFor(p, e, true);
+    let buf;
+    try { buf = await pdfFor(p, e, true); } catch (err) { if (err.code) return res.status(409).json({ error: err.code === 'NO_NATIONAL_ID' ? '公司尚未登錄您的身分證字號，無法產生加密薪資單，請聯絡管理員' : err.message }); throw err; }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Disposition', `attachment; filename="payslip-${month}.pdf"; filename*=UTF-8''${encodeURIComponent(payslipFileName(month, e.name))}`);

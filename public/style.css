@@ -951,3 +951,8 @@ table.send-list .em { font-family: var(--mono, ui-monospace, monospace); font-si
 .hol-up .hu-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .hol-up .hu-i { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--text); font-size: var(--fs-sm); }
 .hol-up .hu-i b { color: var(--brand-text); }
+
+/* 身分證字號（遮罩顯示） */
+.nid-mask { display: inline-block; font-family: var(--mono); letter-spacing: .08em; padding: 3px 8px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.nid-input { letter-spacing: .12em; text-transform: uppercase; }
+.nid-input::placeholder { letter-spacing: normal; text-transform: none; }

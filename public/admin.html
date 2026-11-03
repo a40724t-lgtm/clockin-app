@@ -272,12 +272,12 @@
             <div>
               <div class="label" id="mPwLabel">PDF 開啟密碼</div>
               <div class="opt-grid" style="grid-template-columns:repeat(3,1fr)" role="radiogroup" aria-labelledby="mPwLabel">
-                <label class="opt"><input type="radio" name="mPw" value="pin"><span>員工 PIN 碼（建議）<small>用員工打卡的 4 位數 PIN 開啟</small></span></label>
+                <label class="opt"><input type="radio" name="mPw" value="id"><span>員工身分證字號（建議）<small>密碼為身分證字號（英文大寫），請先在「員工管理」登錄</small></span></label>
                 <label class="opt"><input type="radio" name="mPw" value="fixed"><span>固定密碼<small>所有員工使用同一組密碼</small></span></label>
                 <label class="opt"><input type="radio" name="mPw" value="none"><span>不加密<small>任何人拿到檔案都能開啟</small></span></label>
               </div>
               <div class="hidden" id="mFixedWrap" style="margin-top:10px"><label for="mFixed">固定密碼</label><input type="text" id="mFixed" maxlength="40" autocomplete="off" placeholder="尚未設定"></div>
-              <p class="help">寄給員工、以及員工自行下載的 PDF 會套用這個設定；管理員在後台下載的 PDF 不加密，方便公司留存。</p>
+              <p class="help">寄給員工、以及員工自行下載的 PDF 會套用這個設定；管理員在後台下載的 PDF 不加密，方便公司留存。使用身分證字號時，未登錄身分證字號的員工不會寄出（也不會改用 PIN 或不加密）。</p>
             </div>
             <details class="mail-help"><summary>如何使用 Gmail 寄信？</summary>
               <ol>
@@ -317,9 +317,9 @@
 
     <!-- 員工管理 -->
     <section data-sec="employees" class="hidden">
-      <div class="page-head"><div><h1>員工管理</h1><p>新增員工並設定打卡用的 4 位數 PIN 碼</p></div>
+      <div class="page-head"><div><h1>員工管理</h1><p>新增員工、設定打卡用的 4 位數 PIN 碼與身分證字號（薪資單 PDF 密碼）</p></div>
         <button class="btn" id="addEmp"><i data-icon="plus" data-size="18"></i>新增員工</button></div>
-      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>PIN 碼</th><th>Email（寄薪資單）</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
+      <div class="card table-card"><div class="table-wrap"><table class="stack"><thead><tr><th>員工</th><th>PIN 碼</th><th>身分證字號</th><th>Email（寄薪資單）</th><th>備註</th><th></th></tr></thead><tbody id="empBody"></tbody></table></div></div>
       <p class="help" style="margin-top:12px">移除員工後，他將無法再打卡，但歷史打卡紀錄會保留，仍可查詢與匯出。</p>
     </section>
 

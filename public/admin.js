@@ -237,9 +237,9 @@ async function loadEmployees() { try { employees = await api('/api/admin/employe
 async function renderEmployees() {
   await loadEmployees();
   $('empBody').innerHTML = employees.map((e) => `<tr><td><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></td>
-    <td><span class="pin-pill">${esc(e.pin)}</span></td><td class="email-cell">${e.email ? `${esc(e.email)}${isDemoEmail(e.email) ? ' <span class="badge b-neutral" title="example.com 為示範用保留網域，系統不會寄出">示範地址</span>' : ''}` : '<span class="badge b-warning">未填寫</span>'}</td><td class="muted">${esc(e.note) || '—'}</td>
+    <td><span class="pin-pill">${esc(e.pin)}</span></td><td class="nid-cell">${e.has_national_id ? `<span class="nid-mask mono" title="已加密儲存，僅顯示部分號碼">${esc(e.national_id_masked)}</span>` : `<span class="badge b-warning" title="${esc(e.national_id_error || '未登錄身分證字號就無法寄送加密的 PDF 薪資單')}">${e.national_id_error ? '需重新輸入' : '未登錄'}</span>`}</td><td class="email-cell">${e.email ? `${esc(e.email)}${isDemoEmail(e.email) ? ' <span class="badge b-neutral" title="example.com 為示範用保留網域，系統不會寄出">示範地址</span>' : ''}` : '<span class="badge b-warning">未填寫</span>'}</td><td class="muted">${esc(e.note) || '—'}</td>
     <td><div class="cell-actions"><button class="btn secondary sm" data-eedit="${e.id}">${icon('pencil', 15)}編輯</button><button class="btn danger-ghost sm" data-edel="${e.id}">${icon('trash', 15)}移除</button></div></td></tr>`).join('')
-    || emptyRow(5, '還沒有員工', '按右上角「新增員工」開始建立', 'users');
+    || emptyRow(6, '還沒有員工', '按右上角「新增員工」開始建立', 'users');
   $('empBody').querySelectorAll('[data-eedit]').forEach((b) => b.onclick = () => empModal(employees.find((e) => e.id == b.dataset.eedit)));
   $('empBody').querySelectorAll('[data-edel]').forEach((b) => b.onclick = () => {
     const e = employees.find((x) => x.id == b.dataset.edel);
@@ -252,6 +252,9 @@ function empModal(e, after) {
   modal(`<form class="form-grid">
     <div><label>姓名</label><input type="text" name="name" value="${esc(e.name)}" required maxlength="30"></div>
     <div><label>PIN 碼（4 位數字，員工打卡時使用）</label><input type="text" name="pin" value="${esc(e.pin)}" inputmode="numeric" pattern="\\d{4}" maxlength="4" required class="mono" style="letter-spacing:.3em"></div>
+    <div><label for="empNid">身分證字號（PDF 薪資單開啟密碼）</label><input type="text" id="empNid" name="national_id" value="" maxlength="12" class="mono nid-input" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="${e.has_national_id ? `已登錄 ${esc(e.national_id_masked)}，留空表示不變更` : '例如 A123456789'}" aria-describedby="empNidHelp">
+      <p class="help" id="empNidHelp" style="margin:4px 0 0">${icon('lock', 13)} 加密儲存，後台只顯示部分號碼。寄出的 PDF 薪資單密碼為身分證字號（英文大寫）。也可填新式居留證號（第 2 碼為 8 或 9）。</p>
+      ${e.has_national_id ? '<label class="check-inline" style="margin-top:6px"><input type="checkbox" name="clear_national_id" value="1">清除已登錄的身分證字號</label>' : ''}</div>
     <div><label for="empEmail">Email（選填，用來寄送 PDF 薪資單）</label><input type="email" id="empEmail" name="email" value="${esc(e.email || '')}" maxlength="120" placeholder="例如：wang@gmail.com" spellcheck="false" autocomplete="off">
       ${isDemoEmail(e.email) ? '<p class="help" style="margin:4px 0 0">目前是示範地址（example.com 為保留網域，系統不會寄出），請改成員工真正的 Email。</p>' : ''}</div>
     <div><label>備註（選填）</label><input type="text" name="note" value="${esc(e.note)}" placeholder="例如：門市、兼職"></div>
@@ -262,6 +265,8 @@ function empModal(e, after) {
     toast('已儲存', 'ok');
     if (after) { loadEmployees(); setTimeout(after, 0); } else renderEmployees();
   }, { title: isNew ? '新增員工' : '編輯員工', icon: isNew ? 'plus' : 'user' });
+  const nid = $('empNid');
+  if (nid) nid.oninput = () => { const p = nid.selectionStart; nid.value = nid.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); try { nid.setSelectionRange(p, p); } catch {} };
 }
 $('addEmp').onclick = () => empModal(null);
 
@@ -819,8 +824,9 @@ async function openSendDialog(ids) {
   if (!d.smtp.configured) return infoModal(`<div class="alert warn">${icon('mail', 18)}<div><b>尚未完成寄信設定。</b><br>請到「薪資設定」填寫 SMTP 主機、帳號密碼與寄件者 Email（可使用公司的 Gmail）。</div></div>`, '寄送薪資單', 'send', '前往寄信設定', () => { setPtab('set'); setTimeout(() => $('mailForm').scrollIntoView({ behavior: 'smooth' }), 300); });
   const list = d.recipients.filter((r) => !ids || ids.includes(r.id));
   const EMAIL_OK = (v) => /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(v) && !isDemoEmail(v);
-  const can = (r) => EMAIL_OK(r.email);
-  const stBadge = (r) => !can(r) ? ''
+  const can = (r) => EMAIL_OK(r.email) && !r.no_national_id;
+  const stBadge = (r) => r.no_national_id ? `<span class="badge b-warning" title="${esc(r.note)}">${icon('lock')}未登錄身分證字號，無法寄送</span>`
+    : !can(r) ? ''
     : r.last_sent ? `<span class="badge b-warning">${icon('alert')}已於 ${esc(r.last_sent.at_text.slice(5))} 寄過</span>`
     : r.last && r.last.status === 'failed' ? `<span class="badge b-danger">${icon('alertCircle')}上次失敗</span>` : `<span class="badge b-success">${icon('send')}將寄送</span>`;
   const row = (r) => `<div class="rc-row ${can(r) ? '' : 'dis'}" data-row="${r.id}">
@@ -828,10 +834,12 @@ async function openSendDialog(ids) {
       <span class="rc-main"><span class="rc-top"><span class="who">${avatar(r.name, 'sm')}<b>${esc(r.name)}</b></span><span class="rc-net num">${NT(r.net)}</span></span>
         <span class="rc-emw"><input type="email" class="rc-email" data-eid="${r.id}" value="${can(r) ? esc(r.email) : ''}" placeholder="輸入 Email" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="${esc(r.name)} 的 Email"><span class="rc-saved" aria-live="polite"></span></span>
         <span class="rc-st">${stBadge(r)}</span></span></div>`;
-  const pwText = { pin: '員工 PIN 碼', fixed: '固定密碼', none: '不加密' }[d.pdf_password_mode];
+  const pwText = { id: '密碼為身分證字號（英文大寫）', fixed: '固定密碼', none: '不加密' }[d.pdf_password_mode];
+  const noIds = list.filter((r) => r.no_national_id);
   const saving = new Map();
   modal(`<form class="form-grid send-form" novalidate>
     <dl class="send-meta"><dt>月份</dt><dd>${y} 年 ${m} 月（已確認）</dd><dt>寄件者</dt><dd>${esc(d.smtp.from)}</dd><dt>主旨</dt><dd>${esc(d.subject)}</dd><dt>附件</dt><dd>PDF 薪資單・開啟密碼：${pwText}</dd></dl>
+    ${noIds.length ? `<div class="alert warn" id="sdNoId">${icon('lock', 18)}<div><b>${noIds.map((r) => esc(r.name)).join('、')}</b> 尚未登錄身分證字號，無法產生加密的薪資單，這次不會寄給${noIds.length > 1 ? '他們' : '這位員工'}。<br><a href="#" id="sdGoEmp">前往「員工管理」補上身分證字號</a></div></div>` : ''}
     <div><div class="label">收件人</div>
     <div class="rc-list">${list.map(row).join('') || '<p class="muted" style="margin:12px">沒有員工</p>'}</div></div>
     <div class="alert warn hidden" id="sdDup">${icon('alert', 18)}<div id="sdDupText"></div></div>
@@ -850,6 +858,7 @@ async function openSendDialog(ids) {
   }, { title: ids && ids.length === 1 ? `寄送薪資單給 ${list[0] ? list[0].name : ''}` : `寄送 ${m} 月薪資單`, icon: 'send' });
   $('modal').classList.add('wide');
   if (document.activeElement) document.activeElement.blur(); $('modal').scrollTop = 0;
+  if ($('sdGoEmp')) $('sdGoEmp').onclick = (ev) => { ev.preventDefault(); closeModal(); go('employees'); };
   // 直接在視窗中編輯 Email：格式正確（且不是示範網域）就能勾選，離開欄位時自動存到員工資料
   const refreshRow = (r) => {
     const el = $('modal').querySelector(`[data-row="${r.id}"]`), ck = el.querySelector('[data-rid]');
@@ -896,7 +905,7 @@ const PRESETS = { gmail: { host: 'smtp.gmail.com', port: 465, secure: '1' }, m36
 function mailBody() {
   return { host: $('mHost').value.trim(), port: Number($('mPort').value), secure: $('mSecure').value === '1', user: $('mUser').value.trim(), password: $('mPass').value, clear_password: $('mPassClear').checked,
     from_name: $('mFromName').value.trim(), from_addr: $('mFromAddr').value.trim(), subject: $('mSubject').value, body: $('mBody').value,
-    pdf_password_mode: (document.querySelector('input[name=mPw]:checked') || {}).value || 'pin', pdf_password_fixed: $('mFixed').value };
+    pdf_password_mode: (document.querySelector('input[name=mPw]:checked') || {}).value || 'id', pdf_password_fixed: $('mFixed').value };
 }
 function mailMsg(kind, html) { const el = $('mailResult'); el.className = `alert ${kind}`; el.innerHTML = `${icon(kind === 'ok' ? 'check' : kind === 'info' ? 'hourglass' : 'alertCircle', 18)}<div>${html}</div>`; }
 async function loadMailSettings() {
