@@ -103,6 +103,17 @@ function requireEmployee(req, res, next) {
   next();
 }
 // ---------- 管理員（負責人）與主管 ----------
+// 主管登入帳號：中文或英文名字。NFKC 正規化（全形英數→半形）、去頭尾空白、連續空白合併為一個
+const normUsername = (v) => String(v ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+const usernameKey = (v) => normUsername(v).toLowerCase(); // 英文不分大小寫
+const USERNAME_RE = /^[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N} ._-]*[\p{L}\p{M}\p{N}._-])?$/u;
+function checkUsername(u) {
+  const n = [...u].length;
+  if (!n) return '請輸入登入帳號（中文或英文名字）';
+  if (n > 20) return '登入帳號最多 20 個字';
+  if (!USERNAME_RE.test(u)) return '登入帳號只能使用中文、英文字母、數字、空白與 . _ -';
+  return null;
+}
 const parseIds = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
 // 主管的團隊：所管部門的在職員工＋另外指定的員工
 function teamOf(m) {
@@ -517,12 +528,12 @@ app.post('/api/punch', requireEmployee, (req, res) => {
 
 // ---------- 管理端 API ----------
 app.post('/api/admin/login', (req, res) => {
-  const username = String(req.body?.username || '').trim();
-  if (username) {
-    // 主管登入：帳號＋密碼
-    const key = `mgr|${clientIp(req)}|${username.toLowerCase()}`;
+  const ukey = usernameKey(req.body?.username);
+  if (ukey) {
+    // 主管登入：帳號（中文或英文名字，不分大小寫）＋密碼
+    const key = `mgr|${clientIp(req)}|${ukey}`;
     if (checkLock(key)) return res.status(429).json({ error: '錯誤次數過多，請 5 分鐘後再試' });
-    const m = db.prepare('SELECT * FROM managers WHERE username=? AND active=1').get(username);
+    const m = db.prepare('SELECT * FROM managers WHERE username_key=? AND active=1').get(ukey);
     if (!m || !verifyPassword(String(req.body?.password || ''), m.password_hash)) { addFail(key); return res.status(401).json({ error: '帳號或密碼錯誤' }); }
     failures.delete(key);
     db.prepare('UPDATE managers SET last_login_at=? WHERE id=?').run(Date.now(), m.id);
@@ -669,10 +680,15 @@ function managerView(m) {
     created_text: fmtDateTime(m.created_at), last_login_text: m.last_login_at ? fmtDateTime(m.last_login_at) : '' };
 }
 function parseManager(b, id) {
-  const name = String(b.name || '').trim(), username = String(b.username || '').trim();
+  // 登入帳號預設＝姓名；姓名空白時用帳號
+  let username = normUsername(b.username), name = String(b.name || '').trim().replace(/\s+/g, ' ');
+  if (!username) username = normUsername(name);
+  if (!name) name = username;
   if (!name || name.length > 30) return { error: '請輸入主管姓名（30 字以內）' };
-  if (!/^[A-Za-z0-9._-]{3,30}$/.test(username)) return { error: '登入帳號需為 3～30 個英文字母、數字或 . _ -' };
-  if (db.prepare('SELECT id FROM managers WHERE username=? AND id<>?').get(username, id || 0)) return { error: '這個登入帳號已有人使用' };
+  const ue = checkUsername(username); if (ue) return { error: ue };
+  const ukey = username.toLowerCase();
+  const dupU = db.prepare('SELECT name FROM managers WHERE username_key=? AND id<>?').get(ukey, id || 0);
+  if (dupU) return { error: `登入帳號「${username}」已被主管「${dupU.name}」使用（英文不分大小寫）` };
   const pw = String(b.password || '');
   if ((!id || pw) && pw.length < 8) return { error: '密碼至少 8 個字元' };
   const departments = [...new Set((Array.isArray(b.departments) ? b.departments : []).map((x) => String(x).trim()).filter(Boolean))].slice(0, 30);
@@ -680,7 +696,7 @@ function parseManager(b, id) {
   const employee_ids = [...new Set((Array.isArray(b.employee_ids) ? b.employee_ids : []).map(Number))];
   if (employee_ids.some((x) => !valid.has(x))) return { error: '指定的員工不存在' };
   if (!departments.length && !employee_ids.length) return { error: '請至少指定一個部門或一位員工' };
-  return { name, username, pw, departments, employee_ids };
+  return { name, username, ukey, pw, departments, employee_ids };
 }
 app.get('/api/admin/managers', ownerOnly, (req, res) => {
   res.json({ managers: db.prepare('SELECT * FROM managers ORDER BY active DESC, id').all().map(managerView),
@@ -688,8 +704,8 @@ app.get('/api/admin/managers', ownerOnly, (req, res) => {
 });
 app.post('/api/admin/managers', ownerOnly, (req, res) => {
   const v = parseManager(req.body || {}); if (v.error) return res.status(400).json({ error: v.error });
-  const r = db.prepare('INSERT INTO managers(name,username,password_hash,departments,employee_ids,active,created_at) VALUES(?,?,?,?,?,1,?)')
-    .run(v.name, v.username, hashPassword(v.pw), JSON.stringify(v.departments), JSON.stringify(v.employee_ids), Date.now());
+  const r = db.prepare('INSERT INTO managers(name,username,username_key,password_hash,departments,employee_ids,active,created_at) VALUES(?,?,?,?,?,?,1,?)')
+    .run(v.name, v.username, v.ukey, hashPassword(v.pw), JSON.stringify(v.departments), JSON.stringify(v.employee_ids), Date.now());
   const m = db.prepare('SELECT * FROM managers WHERE id=?').get(r.lastInsertRowid);
   audit('新增主管', `新增主管「${v.name}」（帳號 ${v.username}）｜管理：${[...v.departments.map((d) => `部門 ${d}`), ...managerView(m).team.filter((e) => v.employee_ids.includes(e.id)).map((e) => e.name)].join('、')}`);
   res.json({ ok: true, manager: managerView(m) });
@@ -700,7 +716,7 @@ app.put('/api/admin/managers/:id', ownerOnly, (req, res) => {
   if (!old) return res.status(404).json({ error: '找不到這個主管帳號' });
   const v = parseManager(req.body || {}, id); if (v.error) return res.status(400).json({ error: v.error });
   const active = req.body.active === undefined ? old.active : (req.body.active ? 1 : 0);
-  db.prepare('UPDATE managers SET name=?, username=?, departments=?, employee_ids=?, active=? WHERE id=?').run(v.name, v.username, JSON.stringify(v.departments), JSON.stringify(v.employee_ids), active, id);
+  db.prepare('UPDATE managers SET name=?, username=?, username_key=?, departments=?, employee_ids=?, active=? WHERE id=?').run(v.name, v.username, v.ukey, JSON.stringify(v.departments), JSON.stringify(v.employee_ids), active, id);
   if (v.pw) db.prepare('UPDATE managers SET password_hash=? WHERE id=?').run(hashPassword(v.pw), id);
   // 重設密碼、停用或更改帳號時，讓目前的登入失效
   if (v.pw || !active || v.username !== old.username) db.prepare("DELETE FROM sessions WHERE kind='manager' AND employee_id=?").run(id);

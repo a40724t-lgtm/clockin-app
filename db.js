@@ -163,6 +163,15 @@ CREATE TABLE IF NOT EXISTS managers (
   last_login_at INTEGER
 );
 `);
+// 主管登入帳號可用中文或英文名字：username_key＝NFKC 正規化、空白合併、轉小寫（比對用，不分大小寫）
+{
+  const mc = db.prepare('PRAGMA table_info(managers)').all().map((c) => c.name);
+  if (!mc.includes('username_key')) {
+    db.exec("ALTER TABLE managers ADD COLUMN username_key TEXT DEFAULT ''");
+    for (const m of db.prepare('SELECT id, username FROM managers').all()) db.prepare('UPDATE managers SET username_key=? WHERE id=?').run(String(m.username).normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase(), m.id);
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_managers_ukey ON managers(username_key) WHERE username_key<>''");
+}
 {
   const lr = db.prepare('PRAGMA table_info(leave_requests)').all().map((c) => c.name);
   if (!lr.includes('decided_by')) db.exec("ALTER TABLE leave_requests ADD COLUMN decided_by TEXT DEFAULT ''"); // 審核者姓名（主管姓名或「管理員」）

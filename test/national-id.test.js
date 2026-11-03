@@ -32,7 +32,7 @@ const MONTH = '2026-09';
 let A, NOID;
 before(async () => {
   srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, DATA_DIR, PORT: String(PORT), PII_KEY: '' }, stdio: 'ignore' });
-  for (let i = 0; i < 60; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  for (let i = 0; i < 200; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
   const r = await fetch(BASE + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin1234' }) });
   cookie = r.headers.get('set-cookie').split(';')[0];
   NOID = (await ok('POST', '/api/admin/employees', { name: '未登錄丁', pin: '6001', email: 'ding@mail.test.invalid' })).id;

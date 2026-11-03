@@ -24,7 +24,7 @@ const empAuth = async (id, pin) => ({ Authorization: `Bearer ${(await ok('POST',
 let EMP, mStore, mWare, M1, M2, leaveA, leaveC, wfhC, leaveB;
 before(async () => {
   srv = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, PORT: String(PORT), PII_KEY: '' }, stdio: 'ignore' });
-  for (let i = 0; i < 60; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  for (let i = 0; i < 200; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
   const r = await call('POST', '/api/admin/login', { password: 'admin1234' }, '');
   owner = r.setCookie.split(';')[0];
   EMP = Object.fromEntries((await ok('GET', '/api/admin/employees')).map((e) => [e.name.slice(-1), e]));
@@ -46,7 +46,7 @@ after(() => { srv && srv.kill(); fs.rmSync(DATA_DIR, { recursive: true, force: t
 test('管理員建立主管：驗證、密碼雜湊、不回傳雜湊', async () => {
   assert.equal((await call('POST', '/api/admin/managers', { name: '陳店長', username: 'chen', password: 'short', departments: ['門市部'] })).status, 400);
   assert.equal((await call('POST', '/api/admin/managers', { name: '陳店長', username: 'chen', password: 'store-pass-1' })).status, 400, '沒有部門或員工');
-  assert.equal((await call('POST', '/api/admin/managers', { name: '陳店長', username: 'a b', password: 'store-pass-1', departments: ['門市部'] })).status, 400);
+  assert.equal((await call('POST', '/api/admin/managers', { name: '陳店長', username: 'a/b', password: 'store-pass-1', departments: ['門市部'] })).status, 400);
   M1 = (await ok('POST', '/api/admin/managers', { name: '陳店長', username: 'chen', password: 'store-pass-1', departments: ['門市部'] })).manager;
   assert.deepEqual(M1.team.map((e) => e.name).sort(), ['示範員工A', '示範員工B']);
   assert.equal((await call('POST', '/api/admin/managers', { name: '另一位', username: 'CHEN', password: 'store-pass-1', departments: ['門市部'] })).status, 400, '帳號不分大小寫不可重複');
@@ -144,4 +144,46 @@ test('部門變動即時生效；停用、重設密碼會登出；主管可改�
   assert.equal(typeof (await login('lin', 'reset-pass-9')), 'string');
   await ok('DELETE', `/api/admin/managers/${M2.id}`);
   assert.equal((await login('lin', 'reset-pass-9')).status, 401);
+});
+
+test('中文／英文名字當登入帳號：NFKC、空白合併、英文不分大小寫、長度與字元限制、預設＝姓名', async () => {
+  const mk = (b) => call('POST', '/api/admin/managers', { password: 'name-pass-1', departments: ['門市部'], ...b });
+  // 帳號留空 → 預設用姓名
+  const c = (await mk({ name: '陳店長', username: '' })).manager;
+  assert.equal(c.username, '陳店長');
+  // 全形英數與全形空白 → NFKC；連續空白合併
+  const amy = (await mk({ name: 'Amy Lin', username: ' Ａｍｙ　　Ｌｉｎ ' })).manager;
+  assert.equal(amy.username, 'Amy Lin');
+  // 重複（中文、英文大小寫）
+  let r = await mk({ name: '另一位', username: '陳店長' }); assert.equal(r.status, 400); assert.match(r.error, /已被主管「陳店長」使用/);
+  r = await mk({ name: '另一位', username: 'amy lin' }); assert.equal(r.status, 400); assert.match(r.error, /不分大小寫/);
+  // 長度 1～20、字元限制
+  assert.equal((await mk({ name: '王', username: '王' })).status, 200, '1 個字可以');
+  r = await mk({ name: 'x', username: '一二三四五六七八九十一二三四五六七八九十一' }); assert.equal(r.status, 400); assert.match(r.error, /20 個字/);
+  assert.equal((await mk({ name: '一二三四五六七八九十一二三四五六七八九十', username: '' })).status, 200, '剛好 20 字');
+  for (const bad of ['<script>', '陳@店長', 'a/b', '.amy', 'a\u200bb', '%E9%99%B3']) { r = await mk({ name: 'x', username: bad }); assert.equal(r.status, 400, bad); assert.match(r.error, /只能使用|請輸入/); }
+  assert.equal((await mk({ name: 'Mary-Jane O.', username: 'Mary-Jane_O.' })).status, 200);
+  // 帶重音的拉丁字母：NFD 輸入也能用 NFC 登入
+  assert.equal((await mk({ name: 'José', username: 'Jose\u0301' })).status, 200);
+
+  // 登入：中文帳號（一般 UTF-8 JSON）、英文不分大小寫＋多餘空白、JSON \u 跳脫、全形輸入
+  assert.equal(typeof (await login('陳店長', 'name-pass-1')), 'string');
+  assert.equal(typeof (await login('  AMY   lin ', 'name-pass-1')), 'string');
+  assert.equal(typeof (await login('Ａｍｙ Ｌｉｎ', 'name-pass-1')), 'string');
+  assert.equal(typeof (await login('josé', 'name-pass-1')), 'string');
+  const raw = await fetch(BASE + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: '{"username":"\\u9673\\u5e97\\u9577","password":"name-pass-1"}' });
+  assert.equal(raw.status, 200, 'JSON \\u 跳脫');
+  const ck = raw.headers.get('set-cookie'); assert.match(ck, /^admin_token=[0-9a-f]+;/, 'Cookie 只含 ASCII token');
+  const me = await ok('GET', '/api/admin/me', null, ck.split(';')[0]);
+  assert.equal(me.manager.username, '陳店長'); assert.equal(me.role, 'manager');
+  // URL 編碼的字串不會被當成中文（只接受 JSON 本文）
+  assert.equal((await login(encodeURIComponent('陳店長'), 'name-pass-1')).status, 401);
+  assert.equal((await login('陳店長', 'wrong-pass-1')).status, 401);
+  // 稽核紀錄記錄中文帳號
+  const logs = await ok('GET', '/api/admin/audit');
+  assert.ok(logs.some((a) => a.action === '新增主管' && a.detail.includes('帳號 Amy Lin')));
+  // 改帳號後舊帳號不能登入、舊登入失效
+  await ok('PUT', `/api/admin/managers/${amy.id}`, { name: 'Amy Lin', username: '林艾咪', departments: ['門市部'] });
+  assert.equal((await login('Amy Lin', 'name-pass-1')).status, 401);
+  assert.equal(typeof (await login('林艾咪', 'name-pass-1')), 'string');
 });

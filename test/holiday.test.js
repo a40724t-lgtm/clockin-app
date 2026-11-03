@@ -26,7 +26,7 @@ async function punch(emp, date, tin, tout) {
 let M, H, P, Q; // 月薪、時薪（照給 8 小時）、時薪（無固定排班）
 before(async () => {
   srv = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, PORT: String(PORT) }, stdio: 'ignore' });
-  for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  for (let i = 0; i < 200; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
   const r = await fetch(BASE + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin1234' }) });
   cookie = r.headers.get('set-cookie').split(';')[0];
   await ok('PUT', '/api/admin/settings', { company_name: '測試公司', work_start: '09:00', standard_hours: 8, late_grace_min: 5, lunch_enabled: true, lunch_start: '12:00', lunch_end: '13:00' });

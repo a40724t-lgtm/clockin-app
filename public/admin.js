@@ -1097,7 +1097,7 @@ async function loadManagers() {
   try { mgrCache = await api('/api/admin/managers'); } catch (e) { return handle(e); }
   const list = mgrCache.managers;
   $('mgrList').innerHTML = list.map((m) => `<article class="card mgr-card ${m.active ? '' : 'off'}">
-    <div class="mgr-top"><span class="who">${avatar(m.name, 'md')}<span><b>${esc(m.name)}</b>${m.active ? '' : ' <span class="badge b-neutral">已停用</span>'}<span class="sub mono">${esc(m.username)}</span></span></span>
+    <div class="mgr-top"><span class="who">${avatar(m.name, 'md')}<span><b>${esc(m.name)}</b>${m.active ? '' : ' <span class="badge b-neutral">已停用</span>'}<span class="sub" style="font-weight:400">${icon('user', 13)} 帳號：${esc(m.username)}</span></span></span>
       <div class="cell-actions"><button class="btn secondary sm" data-medit="${m.id}">${icon('pencil', 15)}編輯</button><button class="btn danger-ghost sm" data-mdel="${m.id}">${icon('trash', 15)}刪除</button></div></div>
     <dl class="mgr-meta">
       <dt>管理部門</dt><dd>${m.departments.length ? m.departments.map((d) => `<span class="badge b-brand">${icon('users')}${esc(d)}</span>`).join('') : '<span class="muted">—</span>'}</dd>
@@ -1117,8 +1117,9 @@ async function mgrModal(m) {
   const isNew = !m; m = m || { name: '', username: '', departments: [], employee_ids: [], active: true };
   const deps = [...new Set([...(mgrCache ? mgrCache.departments : []), ...m.departments])];
   modal(`<form class="form-grid mgr-form" novalidate>
-    <div class="row2"><div><label for="mgName">姓名</label><input type="text" id="mgName" name="name" value="${esc(m.name)}" maxlength="30" required placeholder="例如：陳店長"></div>
-      <div><label for="mgUser">登入帳號</label><input type="text" id="mgUser" name="username" value="${esc(m.username)}" maxlength="30" required class="mono" autocapitalize="off" spellcheck="false" autocomplete="off" placeholder="例如：chen.store"></div></div>
+    <div class="row2"><div><label for="mgName">姓名（顯示給員工）</label><input type="text" id="mgName" name="name" value="${esc(m.name)}" maxlength="30" required placeholder="例如：陳店長"></div>
+      <div><label for="mgUser">登入帳號<span class="muted" style="font-weight:400">（預設同姓名，可修改）</span></label><input type="text" id="mgUser" name="username" value="${esc(m.username)}" maxlength="40" autocapitalize="off" spellcheck="false" autocomplete="off" placeholder="中文或英文名字，例如：陳店長、Amy Lin"></div></div>
+    <p class="help" style="margin:-4px 0 0">登入帳號可用中文或英文名字（最多 20 個字，可含數字、空白與 . _ -），英文不分大小寫，不可與其他主管重複。</p>
     <div><label for="mgPw">${isNew ? '密碼（至少 8 個字元）' : '重設密碼（留空表示不變更）'}</label><input type="password" id="mgPw" name="password" minlength="8" autocomplete="new-password" ${isNew ? 'required' : ''} placeholder="${isNew ? '' : '留空表示不變更'}">
       <p class="help" style="margin:4px 0 0">密碼以 scrypt 雜湊後儲存，管理員也看不到原密碼。請當面或用安全的方式告訴主管。</p></div>
     <div><div class="label">管理部門</div>
@@ -1142,6 +1143,12 @@ async function mgrModal(m) {
     $('mgTeam').innerHTML = team.length ? `${icon('users', 14)} 團隊共 ${team.length} 人：${team.map((e) => esc(e.name)).join('、')}` : `${icon('alert', 14)} 請至少選一個部門或一位員工`;
   };
   $('modal').querySelectorAll('[name=dep],[name=emp]').forEach((x) => x.onchange = sync); sync();
+  // 登入帳號預設跟著姓名（使用者手動改過帳號後就不再自動帶入）；中文輸入法組字中不更新
+  let follow = isNew || m.username === m.name;
+  const nm = $('mgName'), us = $('mgUser');
+  nm.addEventListener('input', (ev) => { if (follow && !ev.isComposing) us.value = nm.value.trim(); });
+  nm.addEventListener('compositionend', () => { if (follow) us.value = nm.value.trim(); });
+  us.addEventListener('input', () => { follow = us.value.trim() === nm.value.trim(); });
 }
 $('addMgr').onclick = () => mgrModal(null);
 // 主管變更自己的密碼
