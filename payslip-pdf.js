@@ -7,7 +7,8 @@ const FONT_R = fs.readFileSync(path.join(__dirname, 'fonts', 'NotoSansTC-Regular
 const FONT_B = fs.readFileSync(path.join(__dirname, 'fonts', 'NotoSansTC-Bold.ttf'));
 const NT = (n) => Math.round(n || 0).toLocaleString('en-US');
 const h2 = (x) => +(+x || 0).toFixed(2);
-const C = { text: '#1b2421', muted: '#66716d', line: '#d9dfdc', soft: '#f2f4f3', brand: '#0f5e58', danger: '#b42318', ok: '#1c7a4c', warn: '#995509' };
+// 奶茶／莫蘭迪三色：主色 #8F6E56、文字 #3E3833、重點色 #A06357（其餘為文字色的淡化）
+const C = { text: '#3E3833', muted: '#787470', line: '#e2ddd8', soft: '#f4f0ed', brand: '#8F6E56', danger: '#A06357', ok: '#8F6E56', warn: '#A06357' };
 
 // p：薪資統整結果（getPayroll）；e：其中一位員工；opts.password：PDF 開啟密碼（選填）
 function buildPayslipPdf(p, e, opts = {}) {
@@ -46,7 +47,7 @@ function buildPayslipPdf(p, e, opts = {}) {
     const table = (x, title, lines, total, neg) => {
       let yy = top;
       doc.rect(x, yy, tw, 20).fill(C.soft);
-      txt(title, x + 8, yy + 5, { size: 8.5, bold: true, color: '#33403c' }); txt('金額', x, yy + 5, { size: 8.5, bold: true, color: '#33403c', width: tw - 8, align: 'right' });
+      txt(title, x + 8, yy + 5, { size: 8.5, bold: true, color: '#3E3833' }); txt('金額', x, yy + 5, { size: 8.5, bold: true, color: '#3E3833', width: tw - 8, align: 'right' });
       yy += 20;
       const rows = lines.length ? lines : [{ label: '無', detail: '', amount: null }];
       for (const l of rows) {
@@ -55,11 +56,11 @@ function buildPayslipPdf(p, e, opts = {}) {
         const rh = Math.max(20, 8 + lh + (dh ? dh + 2 : 0) + 4);
         txt(l.label, x + 8, yy + 5, { size: 9.5, width: tw - 80, color: l.amount === null ? C.muted : C.text });
         if (l.amount !== null) txt(`${neg ? '−' : ''}${NT(l.amount)}`, x, yy + 5, { size: 9.5, width: tw - 8, align: 'right' });
-        if (l.detail) txt(l.detail, x + 8, yy + 7 + lh, { size: 7.5, color: '#78837f', width: tw - 16 });
+        if (l.detail) txt(l.detail, x + 8, yy + 7 + lh, { size: 7.5, color: '#787470', width: tw - 16 });
         yy += rh;
-        doc.moveTo(x, yy).lineTo(x + tw, yy).lineWidth(0.5).strokeColor('#eceeed').stroke();
+        doc.moveTo(x, yy).lineTo(x + tw, yy).lineWidth(0.5).strokeColor('#ebe7e3').stroke();
       }
-      doc.moveTo(x, yy).lineTo(x + tw, yy).lineWidth(0.8).strokeColor('#b9c2be').stroke();
+      doc.moveTo(x, yy).lineTo(x + tw, yy).lineWidth(0.8).strokeColor('#c5bdb6').stroke();
       txt(`${title.replace('項目', '')}合計`, x + 8, yy + 6, { size: 10, bold: true });
       txt(`${neg ? '−' : ''}${NT(total)}`, x, yy + 6, { size: 10, bold: true, width: tw - 8, align: 'right' });
       return yy + 24;
@@ -81,7 +82,7 @@ function buildPayslipPdf(p, e, opts = {}) {
     yy = doc.y;
     const att = [['平日加班', `${h2(e.ot.weekday_total)} 小時`], ['休息日加班', `${h2(e.ot.rest_total)} 小時`], ['遲到／早退', `${e.late_count} 次 ${e.late_min} 分／${e.early_count} 次 ${e.early_min} 分`], ['異地打卡／居家／公差', `${e.offsite_count} 次／${e.wfh_days} 天／${e.trip_days} 天`]];
     const aw = (W - 24) / 4;
-    att.forEach(([k, v], i) => { const x = L + i * (aw + 8); doc.roundedRect(x, yy, aw, 38, 6).fill('#f6f7f7'); txt(k, x + 8, yy + 6, { size: 7.5, color: C.muted, width: aw - 16 }); txt(v, x + 8, yy + 19, { size: 9, width: aw - 16 }); });
+    att.forEach(([k, v], i) => { const x = L + i * (aw + 8); doc.roundedRect(x, yy, aw, 38, 6).fill('#f7f4f1'); txt(k, x + 8, yy + 6, { size: 7.5, color: C.muted, width: aw - 16 }); txt(v, x + 8, yy + 19, { size: 9, width: aw - 16 }); });
     doc.y = yy + 50;
 
     // 請假
@@ -90,12 +91,12 @@ function buildPayslipPdf(p, e, opts = {}) {
       yy = doc.y;
       const cols = [[L + 8, 150, 'left', '假別'], [L + 160, 80, 'right', '時數'], [L + 260, 90, 'left', '給薪'], [L + 350, W - 358, 'right', '對薪資影響']];
       doc.rect(L, yy, W, 20).fill(C.soft);
-      cols.forEach(([x, w, a, t]) => txt(t, x, yy + 5, { size: 8.5, bold: true, color: '#33403c', width: w, align: a }));
+      cols.forEach(([x, w, a, t]) => txt(t, x, yy + 5, { size: 8.5, bold: true, color: '#3E3833', width: w, align: a }));
       yy += 20;
       for (const l of e.leaves) {
         const vals = [l.type_name + (l.over_cap_hours ? `（超過上限 ${l.over_cap_hours} 小時不給薪）` : ''), `${h2(l.hours)} 小時`, l.ratio_text, l.effect_text];
         cols.forEach(([x, w, a], i) => txt(vals[i], x, yy + 5, { size: 9, width: w, align: a }));
-        yy += 20; doc.moveTo(L, yy).lineTo(R, yy).lineWidth(0.5).strokeColor('#eceeed').stroke();
+        yy += 20; doc.moveTo(L, yy).lineTo(R, yy).lineWidth(0.5).strokeColor('#ebe7e3').stroke();
       }
       doc.y = yy + 12;
     }
@@ -107,7 +108,7 @@ function buildPayslipPdf(p, e, opts = {}) {
     txt('本薪資單為個人資料，請妥善保管，勿轉寄他人。如對內容有疑問，請與公司聯絡。', L, doc.y, { size: 8, color: C.muted, width: W });
     // 頁尾
     doc.page.margins.bottom = 0;
-    txt(`${p.company_name}・員工打卡系統產生於 ${opts.generated_text || p.generated_text || ''}`, L, 806, { size: 7, color: '#9aa5a1', width: W, align: 'right', lineBreak: false });
+    txt(`${p.company_name}・員工打卡系統產生於 ${opts.generated_text || p.generated_text || ''}`, L, 806, { size: 7, color: '#a59d96', width: W, align: 'right', lineBreak: false });
     doc.end();
   });
 }
