@@ -7,8 +7,8 @@ const FONT_R = fs.readFileSync(path.join(__dirname, 'fonts', 'NotoSansTC-Regular
 const FONT_B = fs.readFileSync(path.join(__dirname, 'fonts', 'NotoSansTC-Bold.ttf'));
 const NT = (n) => Math.round(n || 0).toLocaleString('en-US');
 const h2 = (x) => +(+x || 0).toFixed(2);
-// 奶茶／莫蘭迪三色：主色 #8F6E56、文字 #3E3833、重點色 #A06357（其餘為文字色的淡化）
-const C = { text: '#3E3833', muted: '#787470', line: '#e2ddd8', soft: '#f4f0ed', brand: '#8F6E56', danger: '#A06357', ok: '#8F6E56', warn: '#A06357' };
+// 淺奶茶／莫蘭迪三色：主色 #C4A994（文字用深色 #88664B）、文字 #433C36、重點色 #CBA59A（文字用深色 #985F4E）
+const C = { text: '#433C36', muted: '#787470', line: '#e2ddd8', soft: '#f6f1ec', brand: '#88664B', danger: '#985F4E', ok: '#88664B', warn: '#985F4E' };
 
 // p：薪資統整結果（getPayroll）；e：其中一位員工；opts.password：PDF 開啟密碼（選填）
 function buildPayslipPdf(p, e, opts = {}) {
@@ -47,7 +47,7 @@ function buildPayslipPdf(p, e, opts = {}) {
     const table = (x, title, lines, total, neg) => {
       let yy = top;
       doc.rect(x, yy, tw, 20).fill(C.soft);
-      txt(title, x + 8, yy + 5, { size: 8.5, bold: true, color: '#3E3833' }); txt('金額', x, yy + 5, { size: 8.5, bold: true, color: '#3E3833', width: tw - 8, align: 'right' });
+      txt(title, x + 8, yy + 5, { size: 8.5, bold: true, color: '#433C36' }); txt('金額', x, yy + 5, { size: 8.5, bold: true, color: '#433C36', width: tw - 8, align: 'right' });
       yy += 20;
       const rows = lines.length ? lines : [{ label: '無', detail: '', amount: null }];
       for (const l of rows) {
@@ -91,7 +91,7 @@ function buildPayslipPdf(p, e, opts = {}) {
       yy = doc.y;
       const cols = [[L + 8, 150, 'left', '假別'], [L + 160, 80, 'right', '時數'], [L + 260, 90, 'left', '給薪'], [L + 350, W - 358, 'right', '對薪資影響']];
       doc.rect(L, yy, W, 20).fill(C.soft);
-      cols.forEach(([x, w, a, t]) => txt(t, x, yy + 5, { size: 8.5, bold: true, color: '#3E3833', width: w, align: a }));
+      cols.forEach(([x, w, a, t]) => txt(t, x, yy + 5, { size: 8.5, bold: true, color: '#433C36', width: w, align: a }));
       yy += 20;
       for (const l of e.leaves) {
         const vals = [l.type_name + (l.over_cap_hours ? `（超過上限 ${l.over_cap_hours} 小時不給薪）` : ''), `${h2(l.hours)} 小時`, l.ratio_text, l.effect_text];
