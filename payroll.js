@@ -2,6 +2,15 @@
 // 試算僅供參考，請以會計／勞動法規為準。
 const H = 3600 * 1000;
 const RATES = { wd: [1.34, 1.67], rest: [1.34, 1.67, 2.67] }; // 勞基法第 24 條：平日延長工時；休息日（第 24 條第 2 項）
+// 國定假日（勞基法第 37、39 條）：
+//  ・月薪：國定假日工資已含在月薪內；經同意出勤者，8 小時內加給一日工資（月薪 ÷ 30），不論實際時數。
+//  ・時薪：原約定工作日適逢國定假日→放假、工資照給（時薪 × 原約定時數）；出勤者另加發一倍（時薪 × 實際工時，8 小時內）。
+//    原約定無出勤義務（holiday_hours = 0）者未出勤不給薪，出勤仍加倍。
+//  ・超過 8 小時部分依第 24 條第 1 項延長工時（前 2 小時 ×1.34、再 2 小時 ×1.67）。
+//  參考：勞動部「時薪制勞工的權益」https://www.mol.gov.tw/1607/28162/28166/28180/28182/28188/29022/
+//        勞動部新聞稿「國定假日應依法給假給薪，協商調移假日亦屬可行」https://www.mol.gov.tw/announcement/2099/13623/
+const HOLIDAY_DAY_DIVISOR = 30;   // 一日工資＝月薪 ÷ 30
+const HOLIDAY_IN_HOURS = 8;       // 第 39 條加倍發給的範圍（8 小時內）
 const MIN_WAGE = { year: 2026, monthly: 29500, hourly: 196 };  // 基本工資（提示用）
 const MONTHLY_DIVISOR = 240;                                    // 月薪換算時薪：月薪 ÷ 30 ÷ 8
 const DISCLAIMER = '試算僅供參考，請以會計／勞動法規為準。';
@@ -9,11 +18,12 @@ const PAY_TYPE_TEXT = { monthly: '月薪', hourly: '時薪' };
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m || '');
 const r2 = (n) => Math.round(n * 100) / 100;
 const money = (n) => Math.round(n);
+const NT0 = (n) => Math.round(n || 0).toLocaleString('en-US');
 const fmtMoney = (n) => `NT$ ${Math.round(n).toLocaleString('en-US')}`;
 const ratioText = (r) => (r >= 1 ? '照給' : r === 0.5 ? '半薪' : r <= 0 ? '不給薪' : `給 ${Math.round(r * 100)}%`);
 
 module.exports = function registerPayroll(ctx) {
-  const { app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay } = ctx;
+  const { app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay, HOL } = ctx;
 
   function monthRange(month) {
     const [y, m] = month.split('-').map(Number);
@@ -72,20 +82,25 @@ module.exports = function registerPayroll(ctx) {
       else if (payType === 'hourly' && amount < MIN_WAGE.hourly) warnings.push(`時薪低於 ${MIN_WAGE.year} 年基本工資 NT$ ${MIN_WAGE.hourly}`);
       const myPunches = punches.filter((p) => p.employee_id === e.id);
       const rows = daily.filter((r) => r.employee_id === e.id).sort((a, b) => (a.date < b.date ? -1 : 1));
+      const holSched = payType === 'hourly' ? (e.holiday_hours == null || e.holiday_hours === '' ? s.standard_hours : Math.max(0, Number(e.holiday_hours) || 0)) : null;
+      const hol = { worked_days: 0, in8_ms: 0, list: [] };
       const t = { work_days: 0, weekend_days: 0, worked_ms: 0, paid_ms: 0, wd1: 0, wd2: 0, rs1: 0, rs2: 0, rs3: 0, late_count: 0, late_min: 0, early_count: 0, early_min: 0, offsite: 0, missing: 0 };
       const days = [];
       for (const r of rows) {
         const wknd = L.isWeekend(r.date);
+        const hinfo = HOL ? HOL.info(r.date) : null;
+        const statHol = !!(hinfo && hinfo.paid_holiday && !wknd);   // 國定假日／補假／調移放假（平日）
+        const offDay = !!(hinfo && hinfo.off && !wknd);              // 含公司自訂假日、採用的彈性放假
         const dayP = myPunches.filter((p) => taipeiDateStr(p.ts) === r.date);
         const firstIn = dayP.find((p) => p.type === 'in');
         const outs = dayP.filter((p) => p.type === 'out');
         const lastOut = outs[outs.length - 1];
         const d = { date: r.date, weekday: r.weekday, weekend: wknd, first_in: r.first_in, last_out: r.last_out, worked_h: 0, paid_h: 0, ot1_h: 0, ot2_h: 0, rest1_h: 0, rest2_h: 0, rest3_h: 0, late_min: 0, early_min: 0,
-          leave_text: r.leave_text, work_mode_text: r.work_mode_text, offsite: r.offsite_count, notes: [...r.issues] };
+          leave_text: r.leave_text, work_mode_text: r.work_mode_text, offsite: r.offsite_count, notes: [...r.issues], holiday: hinfo && (hinfo.off || hinfo.kind === 'swap_out') ? hinfo.name : '', holiday_kind: hinfo ? hinfo.kind : '', holiday_extra: 0 };
         if (!r.leave_only) {
           let worked = r.worked_ms;
           t.worked_ms += worked; d.worked_h = r2(worked / H);
-          if (!wknd && rules.clip_early && firstIn) {
+          if (!wknd && !offDay && rules.clip_early && firstIn) {
             const ws = L.workWindow(r.date, s).ws;
             const early = Math.min(Math.max(0, ws - firstIn.ts), worked);
             if (early >= 60000) { worked -= early; d.notes.push(`提早 ${Math.round(early / 60000)} 分到班不計`); }
@@ -96,15 +111,27 @@ module.exports = function registerPayroll(ctx) {
             t.rs1 += a; t.rs2 += b; t.rs3 += c; t.paid_ms += h; t.weekend_days++;
             Object.assign(d, { paid_h: r2(h / H), rest1_h: r2(a / H), rest2_h: r2(b / H), rest3_h: r2(c / H) });
             d.notes.unshift('休息日加班');
+          } else if (statHol) {
+            // 國定假日出勤：8 小時內加倍發給；超過 8 小時依平日延長工時計
+            const capMs = HOLIDAY_IN_HOURS * H;
+            const in8 = Math.min(worked, capMs);
+            const ot = floorU(worked - capMs);
+            const a = Math.min(ot, 2 * H), b = Math.max(ot - 2 * H, 0);
+            t.wd1 += a; t.wd2 += b; t.paid_ms += in8 + ot;
+            if (worked > 0) { hol.worked_days++; hol.in8_ms += in8; }
+            Object.assign(d, { paid_h: r2((in8 + ot) / H), ot1_h: r2(a / H), ot2_h: r2(b / H) });
+            d.notes.unshift(`國定假日出勤（${hinfo.name}）`);
+            hol.list.push({ date: r.date, name: hinfo.name, worked_h: r2(worked / H), in8_h: r2(in8 / H) });
           } else {
+            if (offDay) d.notes.unshift(`${hinfo.kind_text}出勤（${hinfo.name}），依平日計`);
             const ot = floorU(worked - stdMs);
             const a = Math.min(ot, 2 * H), b = Math.max(ot - 2 * H, 0);
             const paid = Math.min(worked, stdMs) + ot;
             t.wd1 += a; t.wd2 += b; t.paid_ms += paid;
             Object.assign(d, { paid_h: r2(paid / H), ot1_h: r2(a / H), ot2_h: r2(b / H) });
-            if (r.late) { t.late_count++; t.late_min += r.late_min; d.late_min = r.late_min; }
+            if (r.late && !offDay) { t.late_count++; t.late_min += r.late_min; d.late_min = r.late_min; }
             // 早退：最後一次下班卡早於應下班時間（請假、午休時段往前扣）
-            if (lastOut && !r.working_now && !r.issues.includes('未打下班卡')) {
+            if (!offDay && lastOut && !r.working_now && !r.issues.includes('未打下班卡')) {
               const w = L.workWindow(r.date, s);
               let end = w.we;
               for (let changed = true; changed;) {
@@ -167,6 +194,42 @@ module.exports = function registerPayroll(ctx) {
         const amt = money(H_(ms) * rate * k); otPay += amt;
         earn.push({ label, detail: `${H_(ms)} 小時 × ${rateTxt} × ${r2(k)}`, amount: amt, group: 'ot' });
       }
+      // 國定假日
+      const holLines = [];
+      let holExtra = 0, holPaidOff = 0, holPaidOffH = 0, holPaidOffDays = 0;
+      if (HOL && hol.worked_days) {
+        if (payType === 'monthly') {
+          const dayWage = amount / HOLIDAY_DAY_DIVISOR;
+          holExtra = money(hol.worked_days * dayWage);
+          holLines.push({ label: '國定假日出勤加給', detail: `${hol.worked_days} 天 × 一日工資（${fmtMoney(amount)} ÷ 30 = ${r2(dayWage)}）；8 小時內加倍發給`, amount: holExtra, group: 'holiday' });
+          for (const x of hol.list) if (x.worked_h > 0) { const dd = days.find((y) => y.date === x.date); if (dd) dd.holiday_extra = money(dayWage); }
+        } else {
+          holExtra = money(H_(hol.in8_ms) * rate);
+          holLines.push({ label: '國定假日出勤加給', detail: `${H_(hol.in8_ms)} 小時 × ${rateTxt}（${hol.worked_days} 天，8 小時內加倍發給）`, amount: holExtra, group: 'holiday' });
+          for (const x of hol.list) { const dd = days.find((y) => y.date === x.date); if (dd) dd.holiday_extra = money(x.in8_h * rate); }
+        }
+      }
+      // 時薪：原約定工作日適逢國定假日 → 工資照給（時薪 × 原約定時數，扣掉當天已出勤時數）
+      const holOffList = [];
+      if (HOL && payType === 'hourly' && holSched > 0) {
+        const until = inProgress ? today : to;
+        const lastPunch = myPunches.length ? taipeiDateStr(myPunches[myPunches.length - 1].ts) : '';
+        for (const h of HOL.between(from, until)) {
+          if (!h.paid_holiday || h.weekend) continue;
+          if (e.hire_date && h.date < e.hire_date) continue;
+          if (!e.active && (!lastPunch || h.date > lastPunch)) continue;
+          const w = hol.list.find((x) => x.date === h.date);
+          const hrs = r2(Math.max(0, holSched - (w ? w.in8_h : 0)));
+          if (hrs <= 0) continue;
+          holPaidOffDays++; holPaidOffH = r2(holPaidOffH + hrs);
+          holOffList.push({ date: h.date, name: h.name, hours: hrs });
+        }
+        if (holPaidOffH) {
+          holPaidOff = money(holPaidOffH * rate);
+          holLines.push({ label: '國定假日照給', detail: `${holPaidOffDays} 天、${holPaidOffH} 小時 × ${rateTxt}（原約定每日 ${holSched} 小時）`, amount: holPaidOff, group: 'holiday' });
+        }
+      }
+      earn.push(...holLines);
       let leaveEffect = 0;
       for (const lv of leaveRows) {
         leaveEffect += lv.effect;
@@ -195,6 +258,7 @@ module.exports = function registerPayroll(ctx) {
         ot: { wd1: H_(t.wd1), wd2: H_(t.wd2), rest1: H_(t.rs1), rest2: H_(t.rs2), rest3: H_(t.rs3), weekday_total: H_(t.wd1 + t.wd2), rest_total: H_(t.rs1 + t.rs2 + t.rs3), total: H_(t.wd1 + t.wd2 + t.rs1 + t.rs2 + t.rs3), pay: otPay },
         late_count: t.late_count, late_min: t.late_min, early_count: t.early_count, early_min: t.early_min, late_deduct: lateDeduct,
         offsite_count: t.offsite, wfh_days: wfh, trip_days: trip, missing_days: t.missing,
+        holiday: { worked_days: hol.worked_days, in8_hours: H_(hol.in8_ms), extra_pay: holExtra, paid_off_days: holPaidOffDays, paid_off_hours: holPaidOffH, paid_off_pay: holPaidOff, sched_hours: holSched, worked: hol.list, paid_off: holOffList },
         leaves: leaveRows, leave_hours: r2(leaveRows.reduce((x, y) => x + y.hours, 0)), leave_effect: leaveEffect,
         earn, deduct, adjustments: adjs, gross, deduct_total: dsum, net: gross - dsum, warnings, days,
       };
@@ -202,9 +266,10 @@ module.exports = function registerPayroll(ctx) {
     const sum = (f) => list.reduce((x, y) => x + f(y), 0);
     return {
       month, from, to, in_progress: inProgress, generated_at: Date.now(), generated_text: fmtDateTime(Date.now()),
-      company_name: s.company_name, rules: { ...rules, rates: RATES, min_wage: MIN_WAGE, monthly_divisor: MONTHLY_DIVISOR, standard_hours: s.standard_hours, work_start: s.work_start },
+      company_name: s.company_name, rules: { ...rules, holiday_day_divisor: HOLIDAY_DAY_DIVISOR, holiday_in_hours: HOLIDAY_IN_HOURS, rates: RATES, min_wage: MIN_WAGE, monthly_divisor: MONTHLY_DIVISOR, standard_hours: s.standard_hours, work_start: s.work_start },
       disclaimer: DISCLAIMER,
-      totals: { employees: list.length, gross: sum((x) => x.gross), deduct: sum((x) => x.deduct_total), net: sum((x) => x.net), ot_hours: r2(sum((x) => x.ot.total)), ot_pay: sum((x) => x.ot.pay), leave_hours: r2(sum((x) => x.leave_hours)), leave_deduct: -sum((x) => (x.pay_type === 'monthly' ? x.leave_effect : 0)) },
+      totals: { employees: list.length, gross: sum((x) => x.gross), deduct: sum((x) => x.deduct_total), net: sum((x) => x.net), ot_hours: r2(sum((x) => x.ot.total)), ot_pay: sum((x) => x.ot.pay), leave_hours: r2(sum((x) => x.leave_hours)), leave_deduct: -sum((x) => (x.pay_type === 'monthly' ? x.leave_effect : 0)), holiday_pay: sum((x) => x.holiday.extra_pay + x.holiday.paid_off_pay), holiday_days: sum((x) => x.holiday.worked_days) },
+      holidays: HOL ? HOL.between(from, to).filter((h) => h.off || h.kind === 'swap_out').map((h) => ({ date: h.date, name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend })) : [],
       employees: list,
     };
   }
@@ -218,9 +283,9 @@ module.exports = function registerPayroll(ctx) {
 
   // ---------- API ----------
   app.get('/api/admin/payroll/settings', (req, res) => {
-    const emps = db.prepare('SELECT id, name, is_sample, pay_type, pay_amount, pay_items, pay_note FROM employees WHERE active=1 ORDER BY id').all()
+    const emps = db.prepare('SELECT id, name, is_sample, pay_type, pay_amount, pay_items, pay_note, holiday_hours FROM employees WHERE active=1 ORDER BY id').all()
       .map((e) => ({ ...e, pay_type: e.pay_type === 'hourly' ? 'hourly' : 'monthly', pay_items: parseItems(e.pay_items), is_sample: !!e.is_sample }));
-    res.json({ employees: emps, leave_types: leaveTypeRows().map((t) => ({ ...t, default_ratio: defaultPay(t.name)[0], default_cap: defaultPay(t.name)[1] })), rules: payRules(), min_wage: MIN_WAGE, rates: RATES, disclaimer: DISCLAIMER });
+    res.json({ employees: emps, leave_types: leaveTypeRows().map((t) => ({ ...t, default_ratio: defaultPay(t.name)[0], default_cap: defaultPay(t.name)[1] })), rules: payRules(), min_wage: MIN_WAGE, rates: RATES, disclaimer: DISCLAIMER, standard_hours: getSettings().standard_hours });
   });
   app.put('/api/admin/payroll/employees/:id', (req, res) => {
     const emp = db.prepare('SELECT * FROM employees WHERE id=? AND active=1').get(Number(req.params.id));
@@ -243,7 +308,17 @@ module.exports = function registerPayroll(ctx) {
       items.push({ kind: it.kind === 'deduct' ? 'deduct' : 'allow', name, amount: Math.round(a) });
     }
     const note = String(b.pay_note || '').trim().slice(0, 100);
-    db.prepare('UPDATE employees SET pay_type=?, pay_amount=?, pay_items=?, pay_note=? WHERE id=?').run(type, Math.round(amt * 100) / 100, JSON.stringify(items), note, emp.id);
+    // 時薪人員國定假日照給時數：空白＝依標準工時；0＝無固定排班
+    let holH = emp.holiday_hours;
+    if (b.holiday_hours !== undefined) {
+      if (b.holiday_hours === '' || b.holiday_hours === null) holH = null;
+      else {
+        holH = Number(b.holiday_hours);
+        if (!Number.isFinite(holH) || holH < 0 || holH > 12) return res.status(400).json({ error: '國定假日照給時數需介於 0～12 小時' });
+        holH = Math.round(holH * 100) / 100;
+      }
+    }
+    db.prepare('UPDATE employees SET pay_type=?, pay_amount=?, pay_items=?, pay_note=?, holiday_hours=? WHERE id=?').run(type, Math.round(amt * 100) / 100, JSON.stringify(items), note, holH, emp.id);
     const desc = (x) => `${PAY_TYPE_TEXT[x.t]} ${fmtMoney(x.a)}${x.items.length ? `；${x.items.map((i) => `${i.kind === 'deduct' ? '扣' : '加'}${i.name} ${i.amount}`).join('、')}` : ''}`;
     audit('修改薪資設定', `${emp.name}：${desc({ t: emp.pay_type === 'hourly' ? 'hourly' : 'monthly', a: emp.pay_amount || 0, items: parseItems(emp.pay_items) })} → ${desc({ t: type, a: amt, items })}`);
     res.json({ ok: true });
@@ -331,19 +406,19 @@ module.exports = function registerPayroll(ctx) {
     const NT = '#,##0';
     const s1 = wb.addWorksheet('薪資統整');
     s1.addRow([`${p.company_name}　${month} 薪資統整（試算）${p.confirmed ? `　已確認 ${p.confirmed_text}` : '　未確認'}`]).font = { bold: true, size: 14 };
-    s1.addRow([`⚠ ${DISCLAIMER}　月薪換算時薪＝月薪÷30÷8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；休息日（週六、日）加班前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67。`]).font = { color: { argb: 'FFB42318' } };
-    const cols = ['員工', '計薪方式', '月薪／時薪', '出勤天數', '其中休息日', '實際工時', '計薪工時', '平日加班前2h', '平日加班3h起', '休息日加班', '加班費', '遲到次數', '遲到分鐘', '早退次數', '早退分鐘', '異地打卡', '居家（天）', '公差（天）', '請假（小時）', '請假扣薪／給薪', '應發合計', '應扣合計', '實發金額', '備註'];
+    s1.addRow([`⚠ ${DISCLAIMER}　月薪換算時薪＝月薪÷30÷8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；休息日（週六、日）加班前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67；國定假日出勤 8 小時內加倍發給（月薪加給月薪÷30、時薪加給時數×時薪），時薪人員國定假日照給原約定時數。`]).font = { color: { argb: 'FFB42318' } };
+    const cols = ['員工', '計薪方式', '月薪／時薪', '出勤天數', '其中休息日', '實際工時', '計薪工時', '平日加班前2h', '平日加班3h起', '休息日加班', '加班費', '國定假日加給／照給', '遲到次數', '遲到分鐘', '早退次數', '早退分鐘', '異地打卡', '居家（天）', '公差（天）', '請假（小時）', '請假扣薪／給薪', '應發合計', '應扣合計', '實發金額', '備註'];
     s1.addRow(cols); head(s1);
     for (const e of p.employees) {
-      const row = s1.addRow([e.name, e.pay_type_text, e.pay_amount, e.work_days, e.weekend_days, e.worked_hours, e.paid_hours, e.ot.wd1, e.ot.wd2, e.ot.rest_total, e.ot.pay, e.late_count, e.late_min, e.early_count, e.early_min, e.offsite_count, e.wfh_days, e.trip_days, e.leave_hours, e.leave_effect, e.gross, e.deduct_total, e.net, e.warnings.join('；')]);
-      [3, 11, 20, 21, 22, 23].forEach((c) => (row.getCell(c).numFmt = NT));
-      row.getCell(23).font = bold;
-      if (e.offsite_count) row.getCell(16).font = { color: { argb: 'FFB42318' }, bold: true };
+      const row = s1.addRow([e.name, e.pay_type_text, e.pay_amount, e.work_days, e.weekend_days, e.worked_hours, e.paid_hours, e.ot.wd1, e.ot.wd2, e.ot.rest_total, e.ot.pay, e.holiday.extra_pay + e.holiday.paid_off_pay, e.late_count, e.late_min, e.early_count, e.early_min, e.offsite_count, e.wfh_days, e.trip_days, e.leave_hours, e.leave_effect, e.gross, e.deduct_total, e.net, e.warnings.join('；')]);
+      [3, 11, 12, 21, 22, 23, 24].forEach((c) => (row.getCell(c).numFmt = NT));
+      row.getCell(24).font = bold;
+      if (e.offsite_count) row.getCell(17).font = { color: { argb: 'FFB42318' }, bold: true };
     }
     const tsum = (f) => r2(p.employees.reduce((x, y) => x + f(y), 0));
-    const tr = s1.addRow(['合計', '', '', tsum((e) => e.work_days), tsum((e) => e.weekend_days), tsum((e) => e.worked_hours), tsum((e) => e.paid_hours), tsum((e) => e.ot.wd1), tsum((e) => e.ot.wd2), tsum((e) => e.ot.rest_total), p.totals.ot_pay, '', '', '', '', '', '', '', p.totals.leave_hours, '', p.totals.gross, p.totals.deduct, p.totals.net]);
-    tr.font = bold; [11, 21, 22, 23].forEach((c) => (tr.getCell(c).numFmt = NT));
-    [14, 9, 11, 9, 10, 10, 10, 12, 12, 11, 11, 9, 9, 9, 9, 9, 9, 9, 11, 14, 12, 12, 12, 40].forEach((w, i) => (s1.getColumn(i + 1).width = w));
+    const tr = s1.addRow(['合計', '', '', tsum((e) => e.work_days), tsum((e) => e.weekend_days), tsum((e) => e.worked_hours), tsum((e) => e.paid_hours), tsum((e) => e.ot.wd1), tsum((e) => e.ot.wd2), tsum((e) => e.ot.rest_total), p.totals.ot_pay, p.totals.holiday_pay, '', '', '', '', '', '', '', p.totals.leave_hours, '', p.totals.gross, p.totals.deduct, p.totals.net]);
+    tr.font = bold; [11, 12, 22, 23, 24].forEach((c) => (tr.getCell(c).numFmt = NT));
+    [14, 9, 11, 9, 10, 10, 10, 12, 12, 11, 11, 14, 9, 9, 9, 9, 9, 9, 9, 11, 14, 12, 12, 12, 40].forEach((w, i) => (s1.getColumn(i + 1).width = w));
     s1.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
 
     const used = new Set(['薪資統整']);
@@ -367,19 +442,19 @@ module.exports = function registerPayroll(ctx) {
       ws.addRow([]);
       ws.addRow(['出勤摘要', '']); head(ws);
       [['出勤天數', `${e.work_days} 天（其中休息日 ${e.weekend_days} 天）`], ['實際工時／計薪工時', `${e.worked_hours}／${e.paid_hours} 小時`], ['平日加班', `前 2 小時 ${e.ot.wd1} h、第 3 小時起 ${e.ot.wd2} h`], ['休息日加班', `前 2 小時 ${e.ot.rest1} h、3～8 小時 ${e.ot.rest2} h、9 小時起 ${e.ot.rest3} h`],
-        ['遲到', `${e.late_count} 次，共 ${e.late_min} 分`], ['早退', `${e.early_count} 次，共 ${e.early_min} 分`], ['異地打卡', `${e.offsite_count} 次`], ['居家上班／公差', `${e.wfh_days} 天／${e.trip_days} 天`]].forEach((r) => ws.addRow(r));
+        ['遲到', `${e.late_count} 次，共 ${e.late_min} 分`], ['早退', `${e.early_count} 次，共 ${e.early_min} 分`], ['異地打卡', `${e.offsite_count} 次`], ['居家上班／公差', `${e.wfh_days} 天／${e.trip_days} 天`], ['國定假日', `出勤 ${e.holiday.worked_days} 天（加給 NT$ ${NT0(e.holiday.extra_pay)}）${e.pay_type === 'hourly' ? `、照給 ${e.holiday.paid_off_days} 天 ${e.holiday.paid_off_hours} 小時（NT$ ${NT0(e.holiday.paid_off_pay)}）` : ''}`]].forEach((r) => ws.addRow(r));
       if (e.leaves.length) {
         ws.addRow([]);
         ws.addRow(['假別', '時數（小時）', '給薪', '對薪資影響', '說明']); head(ws);
         e.leaves.forEach((l) => ws.addRow([l.type_name, l.hours, l.ratio_text, l.effect_text, [l.over_cap_hours ? `超過上限 ${l.over_cap_hours} 小時不給薪` : '', l.cap_note].filter(Boolean).join('；')]));
       }
       ws.addRow([]);
-      ws.addRow(['日期', '星期', '上班', '下班', '實際工時', '計薪工時', '平日加班前2h', '平日加班3h起', '休息日加班', '遲到（分）', '早退（分）', '請假', '工作型態', '異地打卡', '備註']); head(ws);
+      ws.addRow(['日期', '星期', '上班', '下班', '實際工時', '計薪工時', '平日加班前2h', '平日加班3h起', '休息日加班', '遲到（分）', '早退（分）', '請假', '工作型態', '異地打卡', '國定假日', '備註']); head(ws);
       e.days.forEach((d) => {
-        const r = ws.addRow([d.date, d.weekday, d.first_in, d.last_out, d.worked_h, d.paid_h, d.ot1_h || '', d.ot2_h || '', r2(d.rest1_h + d.rest2_h + d.rest3_h) || '', d.late_min || '', d.early_min || '', d.leave_text, d.work_mode_text, d.offsite ? `${d.offsite} 次` : '', d.notes.join('、')]);
+        const r = ws.addRow([d.date, d.weekday, d.first_in, d.last_out, d.worked_h, d.paid_h, d.ot1_h || '', d.ot2_h || '', r2(d.rest1_h + d.rest2_h + d.rest3_h) || '', d.late_min || '', d.early_min || '', d.leave_text, d.work_mode_text, d.offsite ? `${d.offsite} 次` : '', d.holiday || '', d.notes.join('、')]);
         if (d.weekend) r.getCell(2).font = { color: { argb: 'FF2C56B0' }, bold: true };
       });
-      [26, 46, 12, 12, 10, 10, 12, 12, 11, 10, 10, 18, 10, 10, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+      [26, 46, 12, 12, 10, 10, 12, 12, 11, 10, 10, 18, 10, 10, 16, 30].forEach((w, i) => (ws.getColumn(i + 1).width = w));
     }
     const fname = `薪資統整_${month}${p.confirmed ? '' : '_試算'}`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

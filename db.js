@@ -142,6 +142,8 @@ if (!ltCols.includes('pay_ratio')) {
   }
 }
 // 薪資單 Email 寄送
+// 時薪人員「國定假日照給」時數：原約定平日每日工時（NULL＝依標準工時；0＝平日無固定排班，國定假日未出勤不給薪）
+if (!empCols.includes('holiday_hours')) db.exec('ALTER TABLE employees ADD COLUMN holiday_hours REAL');
 if (!empCols.includes('email')) db.exec("ALTER TABLE employees ADD COLUMN email TEXT DEFAULT ''");
 db.exec(`
 CREATE TABLE IF NOT EXISTS payslip_sends (
@@ -220,6 +222,11 @@ function taipeiDateStr(epoch) {
 
 if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.NO_SAMPLE !== '1') {
   const now = Date.now();
+  // 示範資料避開國定假日、補假（只有下面刻意建立的「國定假日值班」例外）
+  const SEED_HOL = require('./holidays')(db);
+  const SEED_L = require('./leave');
+  SEED_L.setOffWeekday(SEED_HOL.isOffWeekday);
+  const isOff = (d) => SEED_L.isOffDay(d);
   const insE = db.prepare('INSERT INTO employees(name,pin,note,is_sample,created_at) VALUES(?,?,?,1,?)');
   const ids = [
     insE.run('示範員工A', '1111', '示範資料，可刪除', now).lastInsertRowid,
@@ -231,8 +238,7 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
   const days = [];
   let t = now - 24 * 3600 * 1000;
   while (days.length < 3) {
-    const wd = new Date(t + TZ_OFFSET).getUTCDay();
-    if (wd !== 0 && wd !== 6) days.unshift(taipeiDateStr(t));
+    if (!isOff(taipeiDateStr(t))) days.unshift(taipeiDateStr(t));
     t -= 24 * 3600 * 1000;
   }
   const plan = [
@@ -257,7 +263,7 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
       lunch_enabled: getSetting('lunch_enabled') === '1', lunch_start: getSetting('lunch_start'), lunch_end: getSetting('lunch_end'),
     };
     const tid = (n) => db.prepare('SELECT id FROM leave_types WHERE name=?').get(n).id;
-    const nextWorkday = (d, n = 1) => { let x = d; let k = 0; while (k < n) { x = L.addDays(x, 1); if (!L.isWeekend(x)) k++; } return x; };
+    const nextWorkday = (d, n = 1) => { let x = d; let k = 0; while (k < n) { x = L.addDays(x, 1); if (!isOff(x)) k++; } return x; };
     const today0 = taipeiDateStr(now);
     const insL = db.prepare(`INSERT INTO leave_requests(employee_id,type_id,type_name,deduct_annual,mode,start_ts,end_ts,hours,reason,status,admin_comment,created_at,decided_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -270,7 +276,7 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
     addLeave(ids[0], '特休', { mode: 'full', start_date: nw5, end_date: nw6 }, '家庭旅遊', 'approved', '玩得開心！', 3);
     addLeave(ids[1], '病假', { mode: 'full', start_date: nextWorkday(today0, 2) }, '預約門診回診', 'pending', '', 0);
     addLeave(ids[1], '事假', { mode: 'full', start_date: days[1] }, '處理私人事務', 'rejected', '當天人手不足，請改天再請', 6);
-    if (!L.isWeekend(today0)) addLeave(ids[2], '事假', { mode: 'am', start_date: today0 }, '上午到銀行辦理貸款', 'approved', '', 2);
+    if (!isOff(today0)) addLeave(ids[2], '事假', { mode: 'am', start_date: today0 }, '上午到銀行辦理貸款', 'approved', '', 2);
     // 示範居家上班／公差（不扣時數）
     const insW = db.prepare(`INSERT INTO leave_requests(employee_id,type_id,type_name,deduct_annual,mode,start_ts,end_ts,hours,reason,status,admin_comment,created_at,decided_at,kind,destination)
       VALUES(?,?,?,0,'full',?,?,0,?,?,?,?,?,?,?)`);
@@ -285,7 +291,7 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
   // 今天的示範打卡（只建立已經過去的時間，避免出現未來時間）
   const today = taipeiDateStr(now);
   const todayWd = new Date(now + TZ_OFFSET).getUTCDay();
-  if (todayWd !== 0 && todayWd !== 6) {
+  if (todayWd !== 0 && todayWd !== 6 && !isOff(today)) {
     [[0, '08:51'], [1, '09:07']].forEach(([ei, tin]) => {
       const ts = taipeiToEpoch(today, tin);
       if (ts < now) insP.run(ids[ei], 'in', ts, now);
@@ -314,7 +320,7 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
     const [ty, tm] = t0.split('-').map(Number);
     const prevMonth = new Date(Date.UTC(ty, tm - 2, 1)).toISOString().slice(0, 7);
     const hist = [];
-    for (let d = `${prevMonth}-01`; d < days[0]; d = L.addDays(d, 1)) if (!L.isWeekend(d)) hist.push(d);
+    for (let d = `${prevMonth}-01`; d < days[0]; d = L.addDays(d, 1)) if (!isOff(d)) hist.push(d);
     const pd = hist.filter((d) => d.startsWith(prevMonth));
     const rnd = (a, b) => { let h = 2166136261; for (const c of `${a}|${b}`) h = Math.imul(h ^ c.codePointAt(0), 16777619); return ((h >>> 0) % 1000) / 1000; };
     const hm = (base, add) => { const [h, m] = base.split(':').map(Number); const t = h * 60 + m + Math.round(add); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
@@ -333,6 +339,12 @@ if (db.prepare('SELECT COUNT(*) c FROM employees').get().c === 0 && process.env.
         if (!pair) return;
         insH.run(id, 'in', taipeiToEpoch(d, pair[0]), now); insH.run(id, 'out', taipeiToEpoch(d, pair[1]), now);
       });
+    }
+    // 示範國定假日值班：上個月第一個平日國定假日（或補假），A（月薪）整天、C（時薪）5 小時 → 薪資會出現「國定假日出勤加給」
+    const hol0 = SEED_HOL.between(`${prevMonth}-01`, L.addDays(days[0], -1)).find((h) => h.paid_holiday && !h.weekend);
+    if (hol0) {
+      insH.run(ids[0], 'in', taipeiToEpoch(hol0.date, '08:56'), now); insH.run(ids[0], 'out', taipeiToEpoch(hol0.date, '18:02'), now);
+      insH.run(ids[2], 'in', taipeiToEpoch(hol0.date, '10:00'), now); insH.run(ids[2], 'out', taipeiToEpoch(hol0.date, '16:00'), now);
     }
     // 示範員工C 上個月第一個週六支援盤點（休息日加班）
     let sat = `${prevMonth}-01`; while (new Date(sat + 'T00:00:00Z').getUTCDay() !== 6) sat = L.addDays(sat, 1);

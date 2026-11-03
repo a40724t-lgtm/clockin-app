@@ -7,6 +7,10 @@ const dateOf = (ts) => new Date(ts + TZ_OFFSET).toISOString().slice(0, 10);
 const timeOf = (ts) => new Date(ts + TZ_OFFSET).toISOString().slice(11, 16);
 const addDays = (date, n) => { const d = new Date(date + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const isWeekend = (date) => { const w = new Date(date + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; };
+// 平日放假判斷（國定假日、補假、調移放假、公司自訂假日）；由 server.js 以 holidays.js 設定
+let offWeekday = () => false;
+const setOffWeekday = (fn) => { offWeekday = typeof fn === 'function' ? fn : () => false; };
+const isOffDay = (date) => isWeekend(date) || offWeekday(date);
 
 // 某天的上班時段：上班時間 → 上班時間 + 標準工時（+ 午休，若午休落在其中）
 function workWindow(date, s) {
@@ -23,12 +27,14 @@ function workWindow(date, s) {
   return { ws, we, ls, le, amEnd, pmStart };
 }
 
-// 計算 [startTs, endTs) 內的請假時數（只算上班時段、扣午休、跳過週六日）
+// 計算 [startTs, endTs) 內的請假時數（只算上班時段、扣午休、跳過週六日與國定假日等放假日）
+// 回傳 skipped：區間內被略過的平日放假日（給畫面顯示「國定假日不計入」）
 function calcLeave(startTs, endTs, s) {
-  const days = [];
-  if (!(endTs > startTs)) return { hours: 0, days };
+  const days = [], skipped = [];
+  if (!(endTs > startTs)) return { hours: 0, days, skipped };
   for (let d = dateOf(startTs); d <= dateOf(endTs - 1); d = addDays(d, 1)) {
     if (isWeekend(d)) continue;
+    if (offWeekday(d)) { skipped.push(d); continue; }
     const w = workWindow(d, s);
     const a = Math.max(startTs, w.ws), b = Math.min(endTs, w.we);
     if (b <= a) continue;
@@ -36,7 +42,7 @@ function calcLeave(startTs, endTs, s) {
     if (w.ls !== null) ms -= Math.max(0, Math.min(b, w.le) - Math.max(a, w.ls));
     if (ms > 0) days.push({ date: d, hours: +(ms / H).toFixed(2), from: timeOf(a), to: timeOf(b), full: a <= w.ws && b >= w.we, start_ts: a, end_ts: b });
   }
-  return { hours: +days.reduce((x, y) => x + y.hours, 0).toFixed(2), days };
+  return { hours: +days.reduce((x, y) => x + y.hours, 0).toFixed(2), days, skipped };
 }
 
 // 依表單模式轉成起訖時間
@@ -91,4 +97,4 @@ function statutoryAnnualDays(hireDate, onDate) {
   return { days, years, months, note: years < 1 ? '年資滿 6 個月' : `年資滿 ${years} 年` };
 }
 
-module.exports = { calcLeave, rangeFromForm, workWindow, leaveLabel, statutoryAnnualDays, dateOf, timeOf, addDays, isWeekend, toEpoch };
+module.exports = { setOffWeekday, isOffDay, calcLeave, rangeFromForm, workWindow, leaveLabel, statutoryAnnualDays, dateOf, timeOf, addDays, isWeekend, toEpoch };

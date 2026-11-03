@@ -101,9 +101,28 @@ function buildPayslipPdf(p, e, opts = {}) {
       doc.y = yy + 12;
     }
 
+    // 國定假日（勞基法第 37、39 條）
+    const hol = e.holiday ? [...(e.holiday.worked || []).map((x) => [x.date, x.name, `出勤 ${h2(x.worked_h)} 小時`, e.pay_type === 'monthly' ? '加給一日工資' : `加給 ${h2(x.in8_h)} 小時`]),
+      ...(e.holiday.paid_off || []).map((x) => [x.date, x.name, '放假', `照給 ${h2(x.hours)} 小時`])].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .reduce((acc, r) => { const last = acc[acc.length - 1]; if (last && last[0] === r[0]) last[3] += `、${r[3]}`; else acc.push([...r]); return acc; }, []) : [];
+    if (hol.length) {
+      ensure(30 + hol.length * 20);
+      yy = doc.y;
+      const cols = [[L + 8, 70, 'left', '日期'], [L + 80, 220, 'left', '國定假日'], [L + 300, 100, 'left', '出勤'], [L + 400, W - 408, 'right', '薪資']];
+      doc.rect(L, yy, W, 20).fill(C.soft);
+      cols.forEach(([x, w, a, t]) => txt(t, x, yy + 5, { size: 8.5, bold: true, color: C.text, width: w, align: a }));
+      yy += 20;
+      for (const r of hol) {
+        const vals = [r[0].slice(5).replace('-', '/'), r[1], r[2], r[3]];
+        cols.forEach(([x, w, a], i) => txt(vals[i], x, yy + 5, { size: 9, width: w, align: a, lineBreak: false }));
+        yy += 20; doc.moveTo(L, yy).lineTo(R, yy).lineWidth(0.5).strokeColor('#ebe7e3').stroke();
+      }
+      doc.y = yy + 12;
+    }
+
     // 免責與說明
     ensure(60);
-    txt(`※ ${p.disclaimer}加班費依勞基法第 24 條計算（月薪換算時薪＝月薪÷30÷8）；週六、日上班以休息日加班計。`, L, doc.y, { size: 8.5, color: C.danger, width: W, lineGap: 2 });
+    txt(`※ ${p.disclaimer}加班費依勞基法第 24 條計算（月薪換算時薪＝月薪÷30÷8）；週六、日上班以休息日加班計；國定假日出勤 8 小時內工資加倍發給（勞基法第 39 條）。`, L, doc.y, { size: 8.5, color: C.danger, width: W, lineGap: 2 });
     doc.moveDown(0.6);
     txt('本薪資單為個人資料，請妥善保管，勿轉寄他人。如對內容有疑問，請與公司聯絡。', L, doc.y, { size: 8, color: C.muted, width: W });
     // 頁尾

@@ -39,6 +39,7 @@
     <a data-page="records"><i data-icon="list"></i>打卡紀錄</a>
     <a data-page="leave"><i data-icon="palm"></i>請假<span class="nav-count" id="navLeaveCount" aria-label="待審核請假"></span></a>
     <a data-page="payroll"><i data-icon="wallet"></i>薪資統整</a>
+    <a data-page="holidays"><i data-icon="flag"></i>國定假日</a>
     <a data-page="employees"><i data-icon="users"></i>員工管理</a>
     <a data-page="settings"><i data-icon="sliders"></i>設定</a>
     <a data-page="audit"><i data-icon="history"></i>修改紀錄</a>
@@ -162,7 +163,7 @@
             <label class="switch-row" for="calPend" style="min-height:36px"><input type="checkbox" class="switch" id="calPend" checked><span class="d" style="font-size:14px;color:var(--text-2)">顯示待審核</span></label>
           </div>
           <div class="cal" id="calGrid"></div>
-          <div class="cal-legend"><span><i style="background:var(--accent-soft)"></i>特休（已核准）</span><span><i style="background:var(--brand-soft);border:1px solid var(--brand-soft-2)"></i>其他假別（已核准）</span><span><i style="background:var(--wfh-bg);border:1px solid var(--wfh-line)"></i>居家上班</span><span><i style="background:var(--info-bg);border:1px solid var(--info-line)"></i>公差</span><span><i style="background:var(--warning-bg);border:1px dashed var(--warning-line)"></i>待審核</span><span class="muted">週六、週日以灰底顯示，不計請假時數</span></div>
+          <div class="cal-legend"><span><i style="background:var(--accent-soft)"></i>特休（已核准）</span><span><i style="background:var(--brand-soft);border:1px solid var(--brand-soft-2)"></i>其他假別（已核准）</span><span><i style="background:var(--wfh-bg);border:1px solid var(--wfh-line)"></i>居家上班</span><span><i style="background:var(--info-bg);border:1px solid var(--info-line)"></i>公差</span><span><i style="background:var(--warning-bg);border:1px dashed var(--warning-line)"></i>待審核</span><span><i class="lg-hol"></i>國定假日／公司假日</span><span class="muted">週六、週日與放假日不計請假時數</span></div>
         </div>
       </div>
 
@@ -179,6 +180,32 @@
       </div>
     </section>
 
+    <!-- 國定假日 -->
+    <section data-sec="holidays" class="hidden">
+      <div class="page-head"><div><h1>國定假日</h1><p>勞基法國定假日與補假行事曆；請假時數、遲到判斷與薪資試算都會依這裡計算</p></div>
+        <div class="inline-actions"><button class="btn" id="holAdd"><i data-icon="plus" data-size="18"></i>新增公司自訂假日</button></div></div>
+      <div class="card pay-bar hol-bar">
+        <button class="btn secondary sm icon-only" id="holPrev" aria-label="上一年"><i data-icon="chevronLeft" data-size="18"></i></button>
+        <h3 id="holYear" class="hol-year"></h3>
+        <button class="btn secondary sm icon-only" id="holNext" aria-label="下一年"><i data-icon="chevronRight" data-size="18"></i></button>
+        <span id="holSum" class="badges"></span>
+      </div>
+      <div id="holNote"></div>
+      <div id="holList" class="hol-list"></div>
+      <details class="card hol-rules">
+        <summary><i data-icon="scale" data-size="18"></i>計算規則與資料來源</summary>
+        <ul>
+          <li><b>國定假日</b>：依勞基法第 37 條及《紀念日及節日實施條例》（114/05/28 公布施行），每年 16 日：開國紀念日、和平紀念日、小年夜、除夕、春節（初一～初三）、兒童節、清明節、勞動節、端午節、中秋節、教師節（孔子誕辰紀念日）、國慶日、臺灣光復暨金門古寧頭大捷紀念日、行憲紀念日。原住民族歲時祭儀（3 日）僅適用原住民族勞工，請以「公司自訂假日」或請假處理。</li>
+          <li><b>補假</b>：國定假日遇週六、日，依勞基法施行細則第 23 條之 1 應另行補假，日期由勞雇協商；系統預設比照人事行政總處公告的補假日，可用「調移」改到其他工作日。</li>
+          <li><b>政府彈性放假／補行上班</b>：只適用政府機關，民間企業預設照常上班；政府彈性放假可選擇「比照放假」（視為公司給假）。</li>
+          <li><b>調移</b>：經勞工個人同意，可把國定假日與某個工作日對調；原日改為正常上班（出勤不加倍），新日期放假並具國定假日性質。</li>
+          <li><b>薪資</b>：月薪人員國定假日工資已含在月薪；出勤者 8 小時內加給一日工資（月薪 ÷ 30）。時薪人員原約定工作日適逢國定假日照給「時薪 × 原約定時數」（在薪資設定填寫，0＝無固定排班不給），出勤者另加發「時薪 × 出勤時數」。超過 8 小時依平日加班（×1.34／×1.67）。公司自訂假日出勤依平日計算。</li>
+          <li><b>請假</b>：放假日不計入請假時數，跨國定假日的請假會自動略過。</li>
+        </ul>
+        <p class="help">資料來源：行政院人事行政總處「政府行政機關辦公日曆表」開放資料（<a href="https://data.gov.tw/dataset/14718" target="_blank" rel="noopener">data.gov.tw/dataset/14718</a>）；法規：<a href="https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=D0020095" target="_blank" rel="noopener">紀念日及節日實施條例</a>、<a href="https://law.moj.gov.tw/LawClass/LawSingle.aspx?pcode=N0030002&flno=23-1" target="_blank" rel="noopener">勞基法施行細則第 23 條之 1</a>。試算僅供參考，請以會計／勞動法規為準。</p>
+      </details>
+    </section>
+
     <!-- 薪資統整 -->
     <section data-sec="payroll" class="hidden">
       <div class="page-head"><div><h1>薪資統整</h1><p>依打卡、請假、加班自動試算每月薪資，可手動調整並確認鎖定</p></div>
@@ -188,7 +215,7 @@
           <button class="btn secondary" id="paySend"><i data-icon="send" data-size="18"></i>寄送薪資單</button>
           <button class="btn" id="payConfirm"><i data-icon="lock" data-size="18"></i>確認本月</button>
         </div></div>
-      <div class="alert warn pay-disclaimer"><i data-icon="alert" data-size="18"></i><div><b>試算僅供參考，請以會計／勞動法規為準。</b>月薪換算時薪＝月薪 ÷ 30 ÷ 8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；目前沒有國定假日行事曆，週六、日上班一律視為「休息日加班」（前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67）。勞健保自付額請手動填寫。</div></div>
+      <div class="alert warn pay-disclaimer"><i data-icon="alert" data-size="18"></i><div><b>試算僅供參考，請以會計／勞動法規為準。</b>月薪換算時薪＝月薪 ÷ 30 ÷ 8；平日加班前 2 小時 ×1.34、第 3 小時起 ×1.67；週六、日上班視為「休息日加班」（前 2 小時 ×1.34、第 3～8 小時 ×1.67、第 9 小時起 ×2.67）；國定假日（含補假、調移）出勤 8 小時內加倍發給（月薪加給一日工資＝月薪 ÷ 30；時薪加給出勤時數 × 時薪），超過 8 小時依平日加班計。勞健保自付額請手動填寫。</div></div>
       <div class="tabs" role="tablist" aria-label="薪資分頁">
         <button class="on" data-ptab="sum" role="tab"><i data-icon="wallet" data-size="16"></i>月份統整</button>
         <button data-ptab="set" role="tab"><i data-icon="sliders" data-size="16"></i>薪資設定</button>
@@ -208,6 +235,7 @@
           <div class="card stat tone-info"><span class="s-ic"><i data-icon="trend"></i></span><div class="n" id="pOT">0</div><div class="l" id="pOTl">加班費（NT$）</div></div>
           <div class="card stat tone-accent"><span class="s-ic"><i data-icon="palm"></i></span><div class="n" id="pLeave">0</div><div class="l" id="pLeavel">請假扣薪（NT$）</div></div>
         </div>
+        <div class="card pay-hol hidden" id="payHol"></div>
         <div class="card table-card pay-table-card"><div class="table-wrap"><table class="pay-table"><thead><tr><th>員工／計薪</th><th>出勤／工時</th><th>加班</th><th>出勤狀況</th><th>請假與薪資影響</th><th class="r">應發</th><th class="r">應扣</th><th class="r">實發</th><th></th></tr></thead><tbody id="payBody"></tbody></table></div></div>
         <div class="pay-cards" id="payCards"></div>
         <p class="help" style="margin-top:12px">點「明細」可查看每一筆計算、加入獎金或其他加扣項；確認後該月份會鎖定（保留確認當下的試算結果），之後修改打卡或請假不會影響已確認的月份。薪資單以 PDF 寄到員工的 Email（只有「已確認」的月份可以寄送），員工也能在打卡頁的「薪資單」自行下載。</p>

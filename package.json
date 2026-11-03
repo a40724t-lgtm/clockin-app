@@ -4,7 +4,9 @@
   "description": "員工上下班打卡系統",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "holidays": "node scripts/build-holidays.js"
   },
   "type": "commonjs",
   "dependencies": {

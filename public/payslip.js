@@ -5,6 +5,16 @@ const month = /^\d{4}-\d{2}$/.test(q.get('month') || '') ? q.get('month') : taip
 const NT = (n) => Math.round(n || 0).toLocaleString('en-US');
 const h = (x) => +(+x || 0).toFixed(2);
 let data = null;
+// 國定假日出勤／照給明細
+function holTable(e) {
+  const H = e.holiday; if (!H) return '';
+  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+  const rows = [...(H.worked || []).map((x) => [x.date, x.name, `出勤 ${h(x.worked_h)} 小時`, e.pay_type === 'monthly' ? '加給一日工資' : `加給 ${h(x.in8_h)} 小時`]),
+    ...(H.paid_off || []).map((x) => [x.date, x.name, '放假', `照給 ${h(x.hours)} 小時`])].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .reduce((acc, r) => { const last = acc[acc.length - 1]; if (last && last[0] === r[0]) last[3] += `、${r[3]}`; else acc.push([...r]); return acc; }, []);
+  if (!rows.length) return '';
+  return `<table class="hol"><thead><tr><th>日期</th><th>國定假日</th><th>出勤</th><th class="r">薪資</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${md(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td class="r">${esc(r[3])}</td></tr>`).join('')}</tbody></table>`;
+}
 function slip(e, p) {
   const [y, m] = p.month.split('-').map(Number);
   const rows = (lines, neg) => lines.map((l) => `<tr><td>${esc(l.label)}<small>${esc(l.detail)}</small></td><td class="r">${neg ? '−' : ''}${NT(l.amount)}</td></tr>`).join('') || '<tr><td colspan="2" style="color:#78837f">無</td></tr>';
@@ -32,7 +42,8 @@ function slip(e, p) {
       <div><span>異地打卡／居家／公差</span>${e.offsite_count} 次／${e.wfh_days} 天／${e.trip_days} 天</div>
     </div>
     ${e.leaves.length ? `<table><thead><tr><th>假別</th><th class="r">時數</th><th>給薪</th><th class="r">對薪資影響</th></tr></thead><tbody>${e.leaves.map((l) => `<tr><td>${esc(l.type_name)}${l.over_cap_hours ? `<small>超過每年上限 ${l.over_cap_hours} 小時不給薪</small>` : ''}</td><td class="r">${h(l.hours)} 小時</td><td>${esc(l.ratio_text)}</td><td class="r">${esc(l.effect_text)}</td></tr>`).join('')}</tbody></table>` : ''}
-    <div class="disc">※ ${esc(p.disclaimer)}加班費依勞基法第 24 條計算（月薪換算時薪＝月薪÷30÷8）；週六、日上班以休息日加班計。</div>
+    ${holTable(e)}
+    <div class="disc">※ ${esc(p.disclaimer)}加班費依勞基法第 24 條計算（月薪換算時薪＝月薪÷30÷8）；週六、日上班以休息日加班計；國定假日出勤 8 小時內工資加倍發給（勞基法第 39 條）。</div>
     <div class="sign"><span>製表</span><span>核准</span><span>員工簽收</span></div>
   </article>`;
 }

@@ -142,6 +142,11 @@ function workBadges(x) {
   return (x.work_mode ? `<span class="badge b-${x.work_mode}">${icon(KIND_IC[x.work_mode])}${x.work_mode === 'wfh' ? '居家' : '公差'}</span>` : '')
     + (x.offsite ? `<span class="badge b-offsite">${icon('mapPinOff')}異地打卡</span>` : '');
 }
+const addDaysStr = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+function holBadge(h) {
+  if (!h) return '';
+  return h.off ? `<span class="badge b-holiday" title="${esc(h.kind_text)}">${icon('flag')}${esc(h.name)}</span>` : `<span class="badge b-neutral" title="${esc(h.note || '')}">${icon('repeat')}調移上班</span>`;
+}
 function renderMain() {
   renderChecks();
   renderGreeting();
@@ -155,6 +160,8 @@ function renderMain() {
   else html = `<span class="chip off"><span class="dot"></span>已下班<span class="sub">今日工時 ${s ? s.worked_text : ''}</span></span>`;
   if (s && s.late) html += `<span class="chip late">${icon('alertCircle', 15)}遲到 ${s.late_min} 分鐘</span>`;
   if (s && s.leave_text) html += `<span class="chip leave">${icon('palm', 15)}今日請假<span class="sub">${esc(s.leave_text)}</span></span>`;
+  const th = me.today_holiday;
+  if (th) html += `<span class="chip holiday">${icon(th.off ? 'flag' : 'repeat', 15)}${th.off ? `今天放假・${esc(th.name)}` : '調移上班日'}</span>`;
   const arr = me.checks && me.checks.arrangement;
   if (arr) html += `<span class="chip ${arr.kind}">${icon(KIND_IC[arr.kind], 15)}${esc(arr.text)}</span>`;
   $('statusLine').innerHTML = html;
@@ -172,10 +179,20 @@ function renderMain() {
     : `<div class="empty" style="padding:22px 8px"><span class="empty-ic">${icon('clock', 24)}</span>今天還沒有打卡紀錄</div>`;
 
   const std = (me.settings && me.settings.standard_hours) || 8;
-  const past = me.recent;
+  // 最近 14 天：打卡／請假紀錄＋放假日（國定假日、補假、公司假日）
+  const holMap = new Map((me.holidays || []).map((h) => [h.date, h]));
+  const seen = new Set(me.recent.map((r) => r.date));
+  const past = [...me.recent, ...(me.holidays || []).filter((h) => h.off && !h.weekend && h.date <= me.today && !seen.has(h.date) && h.date >= addDaysStr(me.today, -13)).map((h) => ({ date: h.date, weekday: h.weekday, holiday_only: true, holiday: h }))]
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
   $('recentHint').textContent = past.length ? `共 ${past.length} 天` : '';
   $('recentList').innerHTML = past.length ? past.map((r) => {
     const [, lm, ld] = r.date.split('-');
+    const hb = holBadge(r.holiday || holMap.get(r.date));
+    if (r.holiday_only) return `<div class="day is-hol">
+      <div class="day-date"><span class="md">${Number(lm)}/${Number(ld)}</span><span class="wd">週${r.weekday}</span></div>
+      <div style="min-width:0"><div class="day-times">${icon('flag', 14)}${esc(r.holiday.name)}</div><div class="bar"><i style="width:0"></i></div></div>
+      <div class="day-right"><div class="day-hours">放假</div><div class="badges">${hb}</div></div>
+    </div>`;
     if (r.leave_only) return `<div class="day">
       <div class="day-date"><span class="md">${Number(lm)}/${Number(ld)}</span><span class="wd">週${r.weekday}</span></div>
       <div style="min-width:0"><div class="day-times">${icon('palm', 14)}${esc(r.leave_text)}</div><div class="bar"><i class="used" style="width:${Math.min(100, (r.leave_hours / std) * 100)}%"></i></div></div>
@@ -184,6 +201,7 @@ function renderMain() {
     const pct = Math.min(100, (r.worked_hours / std) * 100);
     const [, m, d] = r.date.split('-');
     const badges = [
+      hb,
       r.late ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${r.late_min} 分</span>` : '',
       r.overtime_ms ? `<span class="badge b-info">${icon('trend')}加班 ${r.overtime_hours}h</span>` : '',
       ...r.issues.map((i) => `<span class="badge b-warning">${icon('alert')}${esc(i)}</span>`),
@@ -345,7 +363,13 @@ function whenText(l) {
   const st = l.start_text.slice(11), et = l.end_text.slice(11);
   return l.start_date === l.end_text.slice(0, 10) ? `${mdw(l.start_date)} ${st}～${et}` : `${mdw(l.start_date)} ${st} ～ ${mdw(l.end_text.slice(0, 10))} ${et}`;
 }
+function renderHolUp() {
+  const up = (me && me.holidays || []).filter((h) => h.off && !h.weekend && h.date >= me.today).slice(0, 4);
+  $('holUp').classList.toggle('hidden', !up.length);
+  $('holUp').innerHTML = up.length ? `<div class="hu-t">${icon('flag', 16)}近期放假日<span class="muted">不需請假</span></div><div class="hu-list">${up.map((h) => `<span class="hu-i"><b>${esc(mdw(h.date))}</b>${esc(h.name)}</span>`).join('')}</div>` : '';
+}
 function renderLeave() {
+  renderHolUp();
   const b = lv.balance;
   const pend = lv.requests.filter((r) => r.status === 'pending').length;
   $('leavePendCount').textContent = pend || '';
@@ -471,7 +495,7 @@ async function doPreview() {
     const r = await api('/api/leaves/preview', { method: 'POST', headers: auth(), body: f });
     if (seq !== previewSeq) return;
     const t = selectedType();
-    if (!r.hours) { box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}所選時間不含上班時段</div><div>週六、週日與下班時間不需要請假</div>`; return; }
+    if (!r.hours) { box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}所選時間不含上班時段</div><div>${r.holidays_skipped && r.holidays_skipped.length ? `${r.holidays_skipped.map((x) => esc(x.name)).join('、')}放假，` : ''}週六、週日、國定假日與下班時間不需要請假</div>`; return; }
     previewOk = true;
     let bal = '';
     if (t && t.deduct_annual) {
@@ -482,6 +506,7 @@ async function doPreview() {
     box.className = 'preview-box';
     box.innerHTML = `<div class="pv-total">${icon('timer', 18)}共 ${esc(r.hours_text)}</div>
       ${r.days.length > 1 || f.mode !== 'full' ? `<div class="pv-days">${r.days.map((d) => `<div><span>${mdw(d.date)} ${d.from}～${d.to}</span><span>${d.hours} 小時</span></div>`).join('')}</div>` : `<div class="pv-days"><div><span>${mdw(r.days[0].date)} ${r.days[0].from}～${r.days[0].to}</span><span>扣除午休</span></div></div>`}
+      ${r.holidays_skipped && r.holidays_skipped.length ? `<div class="pv-bal">${icon('flag', 14)} 已略過放假日：${r.holidays_skipped.map((x) => `${esc(mdw(x.date))} ${esc(x.name)}`).join('、')}（不計請假）</div>` : ''}
       ${bal}`;
   } catch (e) { if (seq !== previewSeq) return; box.className = 'preview-box err'; box.innerHTML = `<div class="pv-total">${icon('alertCircle', 18)}${esc(e.message)}</div>`; }
 }

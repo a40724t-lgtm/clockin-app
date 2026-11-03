@@ -9,6 +9,12 @@ const fs = require('fs');
 const { DEFAULT_MAIL_BODY, defaultPay, DATA_DIR, db, getSetting, setSetting, hashPassword, verifyPassword, taipeiToEpoch, taipeiDateStr, TZ_OFFSET } = require('./db');
 
 const app = express();
+// 國定假日行事曆（勞基法第 37 條；資料來源見 holidays.js）
+const HOL = require('./holidays')(db);
+L.setOffWeekday(HOL.isOffWeekday);
+const holidayView = (h) => (h ? { name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend, note: h.note || '' } : null);
+// 畫面上要標示的日別（放假日，或調移上班日）
+const holidayBadge = (date) => { const h = HOL.info(date); return h && (h.off || h.kind === 'swap_out') ? holidayView(h) : null; };
 
 // ---------- 反向代理設定（決定如何從 X-Forwarded-For 取得真實 IP） ----------
 // TRUST_PROXY 可設為：數字（代理層數，例如 1）、true、或 IP/網段清單（例如 loopback）
@@ -319,7 +325,8 @@ function computeDaily(punches, settings, leaves, range, arrs) {
     if (missingOut && g.date !== todayStr()) issues.push('未打下班卡');
     let late = false, lateMin = 0;
     const lv = leaveMap.get(`${g.employee_id}|${g.date}`);
-    if (firstIn !== null) {
+    const hol = holidayBadge(g.date);
+    if (firstIn !== null && !(hol && hol.off)) { // 放假日（國定假日等）出勤不算遲到
       // 請假時段內不算遲到：應到時間往後延到請假結束（遇到午休再延到午休結束）
       const startTs = expectedStart(g.date, settings, lv);
       if (startTs !== null) {
@@ -337,7 +344,7 @@ function computeDaily(punches, settings, leaves, range, arrs) {
       worked_ms: worked, worked_hours: +(worked / 3600000).toFixed(2), worked_text: fmtDur(worked),
       overtime_ms: overtime, overtime_hours: +(overtime / 3600000).toFixed(2), overtime_text: overtime ? fmtDur(overtime) : '',
       late, late_min: lateMin, edited, issues: [...new Set(issues)],
-      ...leaveFields(lv), ...workFields(g, arrMap.get(`${g.employee_id}|${g.date}`)),
+      ...leaveFields(lv), ...workFields(g, arrMap.get(`${g.employee_id}|${g.date}`)), holiday: hol,
     });
   }
   // 只有請假、沒有打卡的日子也列出來（不算缺勤）
@@ -346,7 +353,7 @@ function computeDaily(punches, settings, leaves, range, arrs) {
     rows.push({
       employee_id: lv.employee_id, name: lv.name, date: lv.date, weekday: weekday(lv.date), first_in: '', last_out: '', working_now: false,
       worked_ms: 0, worked_hours: 0, worked_text: fmtDur(0), overtime_ms: 0, overtime_hours: 0, overtime_text: '',
-      late: false, late_min: 0, edited: false, issues: [], ...leaveFields(lv), ...workFields(null, arrMap.get(key)), leave_only: true,
+      late: false, late_min: 0, edited: false, issues: [], ...leaveFields(lv), ...workFields(null, arrMap.get(key)), leave_only: true, holiday: holidayBadge(lv.date),
     });
   }
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name, 'zh-Hant')));
@@ -429,7 +436,9 @@ function employeeStatus(emp) {
   const recentPunches = loadPunches(from, today, emp.id).reverse().slice(0, 30).map(punchView);
   return {
     employee: { id: emp.id, name: emp.name },
-    today, today_weekday: weekday(today),
+    today, today_weekday: weekday(today), today_holiday: holidayBadge(today),
+    // 最近 14 天與未來 60 天的放假日（打卡頁、請假頁顯示）
+    holidays: HOL.between(from, L.addDays(today, 60)).filter((h) => h.off || h.kind === 'swap_out').map((h) => ({ date: h.date, weekday: weekday(h.date), ...holidayView(h) })),
     status: !last ? 'none' : last.type === 'in' ? 'in' : 'out',
     today_punches: todays.map(punchView),
     today_summary: recent.find((r) => r.date === today) || null,
@@ -923,7 +932,8 @@ app.post('/api/leaves/preview', requireEmployee, (req, res) => {
   const r = L.rangeFromForm(req.body || {}, s);
   if (r.error) return res.status(400).json({ error: r.error });
   const c = L.calcLeave(r.start, r.end, s);
-  res.json({ hours: c.hours, hours_text: hoursText(c.hours, s.standard_hours), days: c.days.map((d) => ({ date: d.date, weekday: weekday(d.date), hours: d.hours, from: d.from, to: d.to })), label: L.leaveLabel({ start_ts: r.start, end_ts: r.end, mode: r.mode }) });
+  res.json({ hours: c.hours, hours_text: hoursText(c.hours, s.standard_hours), days: c.days.map((d) => ({ date: d.date, weekday: weekday(d.date), hours: d.hours, from: d.from, to: d.to })), label: L.leaveLabel({ start_ts: r.start, end_ts: r.end, mode: r.mode }),
+    holidays_skipped: c.skipped.map((d) => ({ date: d, weekday: weekday(d), name: HOL.info(d)?.name || '放假日' })) });
 });
 app.post('/api/leaves', requireEmployee, (req, res) => {
   const b = req.body || {};
@@ -934,7 +944,7 @@ app.post('/api/leaves', requireEmployee, (req, res) => {
   const r = L.rangeFromForm(b, s);
   if (r.error) return res.status(400).json({ error: r.error });
   const c = L.calcLeave(r.start, r.end, s);
-  if (c.hours <= 0) return res.status(400).json({ error: '所選時間不含上班時段（週六、週日或下班時間），請重新選擇' });
+  if (c.hours <= 0) return res.status(400).json({ error: c.skipped.length ? `所選日期為放假日（${c.skipped.map((d) => HOL.info(d)?.name || '放假日').join('、')}），不需要請假` : '所選時間不含上班時段（週六、週日或下班時間），請重新選擇' });
   const reason = String(b.reason || '').trim();
   if (!reason) return res.status(400).json({ error: '請填寫請假原因' });
   if (reason.length > 500) return res.status(400).json({ error: '原因請在 500 字以內' });
@@ -1012,7 +1022,8 @@ app.get('/api/admin/leaves', (req, res) => {
     if (l.deduct_annual) v.balance = annualBalance(l.employee_id);
     return v;
   });
-  res.json({ leaves: rows, pending: db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get().c });
+  const holidays = isDate(q.from) && isDate(q.to) ? HOL.between(q.from, q.to).filter((h) => h.off || h.kind === 'swap_out').map((h) => ({ date: h.date, ...holidayView(h) })) : [];
+  res.json({ leaves: rows, holidays, pending: db.prepare("SELECT COUNT(*) c FROM leave_requests WHERE status='pending'").get().c });
 });
 function decide(req, res, status) {
   const l = db.prepare('SELECT l.*, e.name FROM leave_requests l JOIN employees e ON e.id=l.employee_id WHERE l.id=?').get(Number(req.params.id));
@@ -1104,7 +1115,52 @@ app.put('/api/admin/leave-balances/:id', (req, res) => {
 });
 
 // 薪資統整（試算）
-const payroll = require('./payroll')({ app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay });
+// ---------- 國定假日行事曆（管理） ----------
+const monthLocked = (date) => !!db.prepare('SELECT 1 FROM payroll_months WHERE month=?').get(String(date).slice(0, 7));
+function lockedError(...dates) {
+  const d = dates.find((x) => x && monthLocked(x));
+  return d ? `${d.slice(0, 7)} 的薪資已確認並鎖定，請先到「薪資統整」解除確認再修改假日` : null;
+}
+app.get('/api/admin/holidays', (req, res) => {
+  const years = HOL.years();
+  const thisYear = Number(todayStr().slice(0, 4));
+  const year = Number(req.query.year) || (years.includes(thisYear) ? thisYear : years[years.length - 1] || thisYear);
+  const list = HOL.between(`${year}-01-01`, `${year}-12-31`).map((h) => ({ date: h.date, weekday: weekday(h.date), ...holidayView(h), change_id: h.change_id || null, to_date: h.to_date || '', from_date: h.from_date || '', for_date: h.for_date || '', adopted: !!h.adopted, orig_kind: h.orig_kind || '', locked: monthLocked(h.date) }));
+  const count = (k) => list.filter((h) => h.kind === k).length;
+  res.json({
+    year, years: [...new Set([...years, thisYear, thisYear + 1])].sort(), published: HOL.published(year), source: HOL.sourceOf(year), about: HOL.about, list,
+    summary: { statutory: list.filter((h) => h.kind === 'statutory' || (h.kind === 'swap_out' && h.orig_kind === 'statutory')).length, makeup: count('makeup'), swaps: count('swap_in'), custom: count('custom'), bridge: count('bridge'), bridge_adopted: list.filter((h) => h.kind === 'bridge' && h.adopted).length, weekday_off: list.filter((h) => h.off && !h.weekend).length },
+  });
+});
+app.post('/api/admin/holidays/custom', (req, res) => {
+  const b = req.body || {};
+  const le = lockedError(b.date); if (le) return res.status(409).json({ error: le });
+  const r = HOL.addCustom(String(b.date || ''), b.name, b.note);
+  if (r.error) return res.status(400).json({ error: r.error });
+  audit('修改國定假日', r.text); res.json({ ok: true });
+});
+app.put('/api/admin/holidays/bridge/:date', (req, res) => {
+  const le = lockedError(req.params.date); if (le) return res.status(409).json({ error: le });
+  const r = HOL.setBridge(req.params.date, !!req.body?.adopt);
+  if (r.error) return res.status(400).json({ error: r.error });
+  audit('修改國定假日', r.text); res.json({ ok: true });
+});
+app.post('/api/admin/holidays/swap', (req, res) => {
+  const b = req.body || {};
+  const le = lockedError(b.date, b.to_date); if (le) return res.status(409).json({ error: le });
+  const r = HOL.swap(String(b.date || ''), String(b.to_date || ''), b.note);
+  if (r.error) return res.status(400).json({ error: r.error });
+  audit('修改國定假日', `勞資協商調移：${r.text}`); res.json({ ok: true });
+});
+app.delete('/api/admin/holidays/changes/:id', (req, res) => {
+  const c = HOL.changeById(req.params.id);
+  if (!c) return res.status(404).json({ error: '找不到這筆設定' });
+  const le = lockedError(c.date, c.to_date); if (le) return res.status(409).json({ error: le });
+  const r = HOL.remove(c.id);
+  audit('修改國定假日', r.text); res.json({ ok: true });
+});
+
+const payroll = require('./payroll')({ app, db, getSetting, setSetting, getSettings, loadPunches, loadLeaves, loadArrangements, computeDaily, arrangementMap, taipeiToEpoch, taipeiDateStr, L, audit, ExcelJS, todayStr, weekday, fmtTime, fmtDateTime, KIND_TEXT, path, defaultPay, HOL });
 require('./payslip-mail')({ app, db, getSetting, setSetting, getSettings, audit, fmtDateTime, getPayroll: payroll.getPayroll, requireEmployee, DEFAULT_MAIL_BODY });
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));

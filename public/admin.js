@@ -30,7 +30,9 @@ function go(page) {
   document.querySelectorAll('.side a[data-page]').forEach((a) => { a.classList.toggle('active', a.dataset.page === page); a.toggleAttribute('aria-current', a.dataset.page === page); });
   document.querySelectorAll('[data-sec]').forEach((s) => s.classList.toggle('hidden', s.dataset.sec !== page));
   window.scrollTo({ top: 0 });
-  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, employees: renderEmployees, settings: loadSettings, audit: loadAudit })[page]();
+  const act = document.querySelector('.side a.active');
+  if (act && matchMedia('(max-width: 900px)').matches) act.scrollIntoView({ inline: 'center', block: 'nearest' });
+  ({ overview: loadOverview, records: loadRecords, leave: loadLeavePage, payroll: loadPayrollPage, holidays: loadHolidays, employees: renderEmployees, settings: loadSettings, audit: loadAudit })[page]();
 }
 function handle(err) { if (err.status === 401) { toast('登入逾時，請重新登入', 'err'); setTimeout(() => location.reload(), 800); } else toast(err.message, 'err'); }
 
@@ -45,6 +47,7 @@ const B = {
   edited: () => `<span class="badge b-neutral">${icon('pencil')}有修改</span>`,
   normal: () => `<span class="badge b-success">${icon('check')}正常</span>`,
   sample: () => '<span class="badge b-accent">示範</span>',
+  holiday: (h) => (h ? `<span class="badge ${h.off ? 'b-holiday' : 'b-neutral'}" title="${esc(h.kind_text)}">${icon(h.off ? 'flag' : 'repeat')}${esc(h.off ? h.name : '調移上班')}</span>` : ''),
   leave: (t) => `<span class="badge b-accent">${icon('palm')}${esc(t)}</span>`,
   onLeave: () => `<span class="badge b-accent">${icon('palm')}請假</span>`,
   wfh: () => `<span class="badge b-wfh">${icon('home')}居家</span>`,
@@ -144,7 +147,7 @@ async function loadRecords() {
     $('tDays').textContent = r.totals.days; $('tHours').textContent = r.totals.worked_hours; $('tOT').textContent = r.totals.overtime_hours;
     $('tLate').textContent = r.totals.late_count; $('tIssue').textContent = r.totals.issue_count; $('tLeave').textContent = r.totals.leave_hours; $('tOffsite').textContent = r.totals.offsite_count;
     $('dailyBody').innerHTML = r.daily.map((d) => {
-      const tags = [workTag(d), d.late ? B.late(d.late_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
+      const tags = [B.holiday(d.holiday), workTag(d), d.late ? B.late(d.late_min) : '', d.working_now ? B.working() : '', ...d.issues.map(B.issue), d.edited ? B.edited() : '', d.leave_text ? B.leave(`${d.leave_text} ${d.leave_hours}h`) : ''].join('');
       return `<tr class="${d.offsite ? 'row-offsite' : ''}">
       <td class="num">${dateCell(d.date, d.weekday)}</td><td><span class="who">${avatar(d.name, 'sm')}${esc(d.name)}</span></td>
       <td class="num">${d.first_in || '<span class="muted">—</span>'}</td><td class="num">${d.last_out || '<span class="muted">—</span>'}</td>
@@ -498,8 +501,9 @@ async function loadCal() {
     for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) {
       const wd = new Date(d + 'T00:00:00Z').getUTCDay();
       const evs = byDay[d] || [];
-      const cls = ['cal-day', wd === 0 || wd === 6 ? 'wknd' : '', d.slice(0, 7) !== calMonth ? 'out' : '', d === today ? 'today' : ''].join(' ');
-      html += `<div class="${cls}"><div class="cal-n"><b>${Number(d.slice(8))}</b>${evs.length > 1 ? `<span class="muted" style="font-size:11px;font-weight:500">${evs.length} 人</span>` : ''}</div>
+      const hol = (r.holidays || []).find((h) => h.date === d);
+      const cls = ['cal-day', wd === 0 || wd === 6 ? 'wknd' : '', hol && hol.off ? 'hol' : '', d.slice(0, 7) !== calMonth ? 'out' : '', d === today ? 'today' : ''].join(' ');
+      html += `<div class="${cls}"><div class="cal-n"><b>${Number(d.slice(8))}</b>${hol ? `<span class="cal-hol" title="${esc(hol.kind_text)}${hol.note ? `：${esc(hol.note)}` : ''}">${esc(hol.off ? hol.name : '調移上班')}</span>` : ''}${evs.length > 1 ? `<span class="muted" style="font-size:11px;font-weight:500">${evs.length} 人</span>` : ''}</div>
         ${evs.slice(0, 3).map(({ l, d: dd }) => `<button type="button" class="cal-ev ${l.status} ${isWork(l) ? l.kind : l.deduct_annual ? 'annual' : ''}" data-ev="${l.id}" title="${esc(`${l.name} ${l.type_name}${l.destination ? `（${l.destination}）` : ''} ${isWork(l) ? '全天' : `${dd.from}～${dd.to}`}（${l.status_text}）`)}">${isWork(l) ? icon(KIND_IC[l.kind], 12) : ''}${esc(l.name.replace('示範員工', ''))} ${esc(isWork(l) ? (l.kind === 'wfh' ? '居家' : '公差') : l.type_name)}${dd.full ? '' : l.mode === 'am' ? ' 上午' : l.mode === 'pm' ? ' 下午' : ` ${dd.from}`}</button>`).join('')}
         ${evs.length > 3 ? `<span class="cal-more">還有 ${evs.length - 3} 筆</span>` : ''}</div>`;
     }
@@ -666,11 +670,14 @@ async function loadPayroll() {
     $('pNet').textContent = NT(p.totals.net); $('pGross').textContent = NT(p.totals.gross);
     $('pOT').textContent = NT(p.totals.ot_pay); $('pOTl').textContent = `加班費・${+p.totals.ot_hours} 小時`;
     $('pLeave').textContent = NT(p.totals.leave_deduct); $('pLeavel').textContent = `請假扣薪・請假 ${+p.totals.leave_hours} 小時`;
+    const offs = (p.holidays || []).filter((h) => h.off && !h.weekend);
+    $('payHol').innerHTML = offs.length || p.totals.holiday_pay ? `<span class="ph-l">${icon('flag', 16)}本月放假日</span>${offs.map((h) => `<span class="badge ${h.paid_holiday ? 'b-holiday' : 'b-neutral'}">${esc(Number(h.date.slice(5, 7)) + '/' + Number(h.date.slice(8)))} ${esc(h.name)}</span>`).join('') || '<span class="muted">無</span>'}${p.totals.holiday_pay ? `<span class="ph-sum">國定假日加給／照給合計 <b>${ntd(p.totals.holiday_pay)}</b></span>` : ''}` : '';
+    $('payHol').classList.toggle('hidden', !$('payHol').innerHTML);
     $('payBody').innerHTML = p.employees.map((e) => `<tr>
       <td class="wrap pay-who"><span class="who">${avatar(e.name, 'sm')}<span>${esc(e.name)} ${e.is_sample ? B.sample() : ''}<span class="sub" style="font-weight:400"><span class="badge ${e.pay_type === 'hourly' ? 'b-info' : 'b-brand'}">${e.pay_type_text}</span> ${ntd(e.pay_amount)}${e.pay_type === 'monthly' ? `・時薪 ${e.hourly_rate}` : ''}</span>${e.warnings.length ? `<span class="sub" style="color:var(--warning);font-weight:500">${icon('alert', 13)} ${esc(e.warnings[0])}</span>` : ''}</span></span></td>
       <td class="num"><b>${e.work_days}</b> 天・${+e.worked_hours} 小時<span class="sub">計薪 ${+e.paid_hours} 小時${e.weekend_days ? `・休息日 ${e.weekend_days} 天` : ''}</span></td>
       <td class="num">${e.ot.total ? `<b>${+e.ot.total}</b> 小時<span class="sub">平日 ${+e.ot.wd1}＋${+e.ot.wd2}${e.ot.rest_total ? `・休息日 ${+e.ot.rest_total}` : ''}</span><span class="sub">${ntd(e.ot.pay)}</span>` : '<span class="muted">—</span>'}</td>
-      <td><span class="badges pay-st">${e.late_count ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${e.late_count} 次 ${e.late_min} 分</span>` : ''}${e.early_count ? `<span class="badge b-warning">${icon('logout')}早退 ${e.early_count} 次 ${e.early_min} 分</span>` : ''}${e.offsite_count ? B.offsite(e.offsite_count) : ''}${e.wfh_days ? `<span class="badge b-wfh">${icon('home')}居家 ${e.wfh_days} 天</span>` : ''}${e.trip_days ? `<span class="badge b-trip">${icon('briefcase')}公差 ${e.trip_days} 天</span>` : ''}${!e.late_count && !e.early_count && !e.offsite_count && !e.wfh_days && !e.trip_days ? B.normal() : ''}</span>${e.late_deduct ? `<span class="sub" style="color:var(--danger)">遲到／早退扣 ${ntd(e.late_deduct)}</span>` : ''}</td>
+      <td><span class="badges pay-st">${holBadge(e)}${e.late_count ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${e.late_count} 次 ${e.late_min} 分</span>` : ''}${e.early_count ? `<span class="badge b-warning">${icon('logout')}早退 ${e.early_count} 次 ${e.early_min} 分</span>` : ''}${e.offsite_count ? B.offsite(e.offsite_count) : ''}${e.wfh_days ? `<span class="badge b-wfh">${icon('home')}居家 ${e.wfh_days} 天</span>` : ''}${e.trip_days ? `<span class="badge b-trip">${icon('briefcase')}公差 ${e.trip_days} 天</span>` : ''}${!e.late_count && !e.early_count && !e.offsite_count && !e.wfh_days && !e.trip_days && !holBadge(e) ? B.normal() : ''}</span>${e.late_deduct ? `<span class="sub" style="color:var(--danger)">遲到／早退扣 ${ntd(e.late_deduct)}</span>` : ''}</td>
       <td class="wrap">${leaveCell(e)}</td>
       <td class="num r">${NT(e.gross)}</td><td class="num r neg">${e.deduct_total ? '−' + NT(e.deduct_total) : '0'}</td>
       <td class="num r"><b class="pay-net">${NT(e.net)}</b></td>
@@ -683,8 +690,13 @@ async function loadPayroll() {
     $('payBody').querySelectorAll('[data-psend]').forEach((b) => b.onclick = () => openSendDialog([Number(b.dataset.psend)]));
   } catch (e) { handle(e); }
 }
+function holBadge(e) {
+  const h = e.holiday; if (!h) return '';
+  return (h.worked_days ? `<span class="badge b-holiday" title="國定假日出勤 ${h.worked_days} 天・加給 NT$ ${NT(h.extra_pay)}">${icon('flag')}國定假日 ${h.worked_days} 天</span>` : '')
+    + (h.paid_off_days ? `<span class="badge b-holiday" title="國定假日放假照給 ${h.paid_off_days} 天・NT$ ${NT(h.paid_off_pay)}">${icon('flag')}照給 ${h.paid_off_days} 天</span>` : '');
+}
 function attBadges(e) {
-  return `${e.late_count ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${e.late_count} 次 ${e.late_min} 分</span>` : ''}${e.early_count ? `<span class="badge b-warning">${icon('logout')}早退 ${e.early_count} 次 ${e.early_min} 分</span>` : ''}${e.offsite_count ? B.offsite(e.offsite_count) : ''}${e.wfh_days ? `<span class="badge b-wfh">${icon('home')}居家 ${e.wfh_days} 天</span>` : ''}${e.trip_days ? `<span class="badge b-trip">${icon('briefcase')}公差 ${e.trip_days} 天</span>` : ''}${!e.late_count && !e.early_count && !e.offsite_count && !e.wfh_days && !e.trip_days ? B.normal() : ''}`;
+  return `${holBadge(e)}${e.late_count ? `<span class="badge b-danger">${icon('alertCircle')}遲到 ${e.late_count} 次 ${e.late_min} 分</span>` : ''}${e.early_count ? `<span class="badge b-warning">${icon('logout')}早退 ${e.early_count} 次 ${e.early_min} 分</span>` : ''}${e.offsite_count ? B.offsite(e.offsite_count) : ''}${e.wfh_days ? `<span class="badge b-wfh">${icon('home')}居家 ${e.wfh_days} 天</span>` : ''}${e.trip_days ? `<span class="badge b-trip">${icon('briefcase')}公差 ${e.trip_days} 天</span>` : ''}${!e.late_count && !e.early_count && !e.offsite_count && !e.wfh_days && !e.trip_days && !holBadge(e) ? B.normal() : ''}`;
 }
 // 手機版：每位員工一張卡片（顯示表格的所有欄位）
 function payCard(e, month) {
@@ -719,6 +731,7 @@ function payDetail(e) {
       <div><div class="label">應扣項目</div><table class="pay-lines"><tbody>${payLines(e.deduct, -1)}</tbody><tfoot><tr><td>應扣合計</td><td class="num r neg">−${NT(e.deduct_total)}</td></tr></tfoot></table></div>
     </div>
     <div class="pay-netline"><span>實發金額</span><b>${ntd(e.net)}</b></div>
+    ${e.holiday && (e.holiday.worked.length || e.holiday.paid_off.length) ? `<div><div class="label">國定假日</div><div class="pay-leaves">${e.holiday.worked.map((h) => `<span class="pl pos"><b>${mdw(h.date)} ${esc(h.name)}</b> 出勤 ${+h.worked_h} 小時<em>${e.pay_type === 'monthly' ? '加給一日工資' : `加給 ${+h.in8_h} 小時`}</em></span>`).join('')}${e.holiday.paid_off.map((h) => `<span class="pl pos"><b>${mdw(h.date)} ${esc(h.name)}</b> 放假<em>照給 ${+h.hours} 小時</em></span>`).join('')}</div></div>` : ''}
     ${e.leaves.length ? `<div><div class="label">請假</div>${leaveCell(e)}${e.leaves.filter((l) => l.cap_note).map((l) => `<p class="help" style="margin:4px 0 0">${esc(l.type_name)}：${esc(l.cap_note)}${l.over_cap_hours ? `，超過上限 ${l.over_cap_hours} 小時不給薪` : ''}</p>`).join('')}</div>` : ''}
     ${locked ? `<div class="alert info">${icon('lock', 18)}<div>此月份已確認鎖定，若要調整請先「解除確認」。</div></div>` : `
     <fieldset class="pay-adj"><legend>新增獎金／其他加扣項</legend>
@@ -768,7 +781,7 @@ async function loadPaySettings() {
       const low = e.pay_amount && (e.pay_type === 'monthly' ? e.pay_amount < r.min_wage.monthly : e.pay_amount < r.min_wage.hourly);
       return `<tr><td><span class="who">${avatar(e.name, 'sm')}${esc(e.name)} ${e.is_sample ? B.sample() : ''}</span></td>
       <td><span class="badge ${e.pay_type === 'hourly' ? 'b-info' : 'b-brand'}">${e.pay_type === 'hourly' ? '時薪' : '月薪'}</span></td>
-      <td class="num r">${e.pay_amount ? `<b>${ntd(e.pay_amount)}</b>${e.pay_type === 'monthly' ? `<span class="sub">時薪 ${(e.pay_amount / 240).toFixed(2)}</span>` : '<span class="sub">每小時</span>'}` : '<span class="badge b-warning">尚未設定</span>'}${low ? `<span class="sub" style="color:var(--danger)">低於基本工資</span>` : ''}</td>
+      <td class="num r">${e.pay_amount ? `<b>${ntd(e.pay_amount)}</b>${e.pay_type === 'monthly' ? `<span class="sub">時薪 ${(e.pay_amount / 240).toFixed(2)}</span>` : `<span class="sub">每小時・國定假日照給 ${e.holiday_hours == null ? r.standard_hours : +e.holiday_hours} 小時</span>`}` : '<span class="badge b-warning">尚未設定</span>'}${low ? `<span class="sub" style="color:var(--danger)">低於基本工資</span>` : ''}</td>
       <td>${itemsOf(e, 'allow')}</td><td>${itemsOf(e, 'deduct')}</td>
       <td class="wrap muted">${esc(e.pay_note) || '—'}</td>
       <td><div class="cell-actions"><button class="btn secondary sm" data-payedit="${e.id}">${icon('pencil', 15)}編輯</button></div></td></tr>`;
@@ -952,6 +965,8 @@ function payEmpModal(e) {
       <label class="opt"><input type="radio" name="pay_type" value="monthly" ${e.pay_type !== 'hourly' ? 'checked' : ''}><span>月薪<small>固定月薪，請假依假別扣薪</small></span></label>
       <label class="opt"><input type="radio" name="pay_type" value="hourly" ${e.pay_type === 'hourly' ? 'checked' : ''}><span>時薪<small>依實際工時計薪</small></span></label></div></div>
     <div><label for="peAmt" id="peAmtL">金額</label><input type="number" id="peAmt" name="pay_amount" min="0" step="1" value="${e.pay_amount || ''}" required inputmode="numeric"><p class="help" id="peHint"></p></div>
+    <div id="peHolWrap"><label for="peHol">國定假日照給時數（每日）</label><input type="number" id="peHol" min="0" max="12" step="0.5" value="${e.holiday_hours ?? ''}" placeholder="${paySet.standard_hours || 8}（依標準工時）" inputmode="decimal">
+      <p class="help">原約定平日每天工作幾小時；平日遇國定假日放假時照給「時薪 × 此時數」。沒有固定排班的兼職請填 0（國定假日未出勤不給薪，出勤仍加倍）。</p></div>
     <div><div class="label">固定津貼／固定扣項（每月）</div><div id="peItems" class="pay-items">${e.pay_items.map(payItemRow).join('')}</div>
       <button type="button" class="btn soft sm" id="peAdd" style="margin-top:8px">${icon('plus', 15)}新增一項</button>
       <p class="help">勞保、健保自付額請依投保級距手動填寫（系統不自動計算）。</p></div>
@@ -959,13 +974,14 @@ function payEmpModal(e) {
     ${actions('儲存')}</form>`,
   async (f) => {
     const items = [...$('peItems').querySelectorAll('.pay-item')].map((r) => ({ kind: r.querySelector('.pi-kind').value, name: r.querySelector('.pi-name').value, amount: r.querySelector('.pi-amt').value }));
-    await api('/api/admin/payroll/employees/' + e.id, { method: 'PUT', body: { pay_type: f.querySelector('[name=pay_type]:checked').value, pay_amount: $('peAmt').value, pay_note: $('peNote').value, pay_items: items } });
+    await api('/api/admin/payroll/employees/' + e.id, { method: 'PUT', body: { pay_type: f.querySelector('[name=pay_type]:checked').value, pay_amount: $('peAmt').value, pay_note: $('peNote').value, pay_items: items, holiday_hours: $('peHol').value } });
     toast(`已更新 ${e.name} 的薪資設定`, 'ok'); loadPaySettings();
   }, { title: '薪資設定', icon: 'banknote' });
   const mw = paySet.min_wage;
   const sync = () => {
     const h = $('modal').querySelector('[name=pay_type]:checked').value === 'hourly';
     $('peAmtL').textContent = h ? '時薪（NT$／小時）' : '月薪（NT$）';
+    $('peHolWrap').classList.toggle('hidden', !h);
     const v = Number($('peAmt').value || 0);
     $('peHint').innerHTML = (h ? `${mw.year} 年基本工資時薪 NT$ ${mw.hourly}` : `換算時薪 ${v ? (v / 240).toFixed(2) : '—'}（月薪 ÷ 30 ÷ 8）・${mw.year} 年基本工資月薪 NT$ ${NT(mw.monthly)}`)
       + (v && v < (h ? mw.hourly : mw.monthly) ? '　<b style="color:var(--danger)">低於基本工資</b>' : '');
@@ -975,5 +991,68 @@ function payEmpModal(e) {
   $('peAdd').onclick = () => { $('peItems').insertAdjacentHTML('beforeend', payItemRow()); bindRm(); $('peItems').lastElementChild.querySelector('.pi-name').focus(); };
   bindRm();
 }
+
+// =========================================================
+// 國定假日
+// =========================================================
+let holYear = null, holCur = null;
+const HOL_BADGE = { statutory: 'b-holiday', makeup: 'b-holiday', swap_in: 'b-holiday', custom: 'b-accent', swap_out: 'b-neutral', bridge: 'b-neutral', gov_workday: 'b-neutral' };
+async function loadHolidays() {
+  try {
+    const r = await api('/api/admin/holidays' + (holYear ? `?year=${holYear}` : ''));
+    holCur = r; holYear = r.year;
+    $('holYear').textContent = `${r.year} 年`;
+    $('holPrev').disabled = r.year <= r.years[0]; $('holNext').disabled = r.year >= r.years[r.years.length - 1];
+    const sm = r.summary;
+    $('holSum').innerHTML = `<span class="badge b-holiday">${icon('flag')}國定假日 ${sm.statutory} 日</span><span class="badge b-holiday">補假 ${sm.makeup} 日</span>${sm.swaps ? `<span class="badge b-neutral">${icon('repeat')}調移 ${sm.swaps}</span>` : ''}${sm.custom ? `<span class="badge b-accent">公司自訂 ${sm.custom}</span>` : ''}<span class="badge b-neutral">平日放假共 ${sm.weekday_off} 天</span>`;
+    $('holNote').innerHTML = r.published ? '' : `<div class="alert info">${icon('info', 18)}<div>人事行政總處尚未公告 ${r.year} 年辦公日曆表（或系統尚未更新），目前只顯示公司自訂假日。公告後執行 <code>node scripts/build-holidays.js ${r.year - 1911}</code> 更新。</div></div>`;
+    const byMonth = new Map();
+    for (const h of r.list) { const m = Number(h.date.slice(5, 7)); if (!byMonth.has(m)) byMonth.set(m, []); byMonth.get(m).push(h); }
+    $('holList').innerHTML = [...byMonth].map(([m, hs]) => `<section class="card hol-month"><h3>${m} 月</h3>${hs.map(holRow).join('')}</section>`).join('')
+      || `<div class="card"><div class="empty"><span class="empty-ic">${icon('flag', 24)}</span><b>${r.year} 年尚無假日資料</b>可按右上角新增公司自訂假日</div></div>`;
+    $('holList').querySelectorAll('[data-hswap]').forEach((b) => b.onclick = () => holSwap(r.list.find((x) => x.date === b.dataset.hswap)));
+    $('holList').querySelectorAll('[data-hdel]').forEach((b) => b.onclick = () => holDelete(r.list.find((x) => String(x.change_id) === b.dataset.hdel)));
+    $('holList').querySelectorAll('[data-hbridge]').forEach((b) => b.onchange = async () => {
+      try { await api('/api/admin/holidays/bridge/' + b.dataset.hbridge, { method: 'PUT', body: { adopt: b.checked } }); toast(b.checked ? '已設為比照放假' : '已改為照常上班', 'ok'); loadHolidays(); } catch (err) { b.checked = !b.checked; handle(err); }
+    });
+  } catch (e) { handle(e); }
+}
+function holRow(h) {
+  const [, mm, dd] = h.date.split('-');
+  let act = '';
+  if (h.locked) act = `<span class="badge b-neutral" title="該月薪資已確認">${icon('lock')}已鎖定</span>`;
+  else if ((h.kind === 'statutory' || h.kind === 'makeup') && !h.weekend) act = `<button class="btn secondary sm" data-hswap="${h.date}">${icon('repeat', 15)}調移</button>`;
+  else if (h.kind === 'swap_out' || h.kind === 'swap_in') act = `<button class="btn ghost sm" data-hdel="${h.change_id}">${icon('undo', 15)}取消調移</button>`;
+  else if (h.kind === 'custom') act = `<button class="btn danger-ghost sm" data-hdel="${h.change_id}">${icon('trash', 15)}刪除</button>`;
+  else if (h.kind === 'bridge') act = `<label class="switch-row hol-sw"><input type="checkbox" class="switch" data-hbridge="${h.date}" ${h.adopted ? 'checked' : ''}><span class="d">比照放假</span></label>`;
+  const kindText = h.kind === 'statutory' && h.weekend ? '國定假日・逢週末' : h.kind_text;
+  return `<div class="hol-row ${h.off ? '' : 'is-work'} ${h.weekend ? 'is-wknd' : ''}">
+    <div class="hol-date"><b>${Number(mm)}/${Number(dd)}</b><span>週${h.weekday}</span></div>
+    <div class="hol-main"><div class="hol-name">${esc(h.name)}</div><div class="hol-meta"><span class="badge ${HOL_BADGE[h.kind]}">${esc(kindText)}</span>${h.note ? `<span class="hol-note">${esc(h.note)}</span>` : ''}</div></div>
+    <div class="hol-act">${act}</div></div>`;
+}
+function holSwap(h) {
+  modal(`<form class="form-grid">
+    <div class="summary-box"><b>${esc(h.name)}</b>・${mdw(h.date)}</div>
+    <div class="alert warn">${icon('alert', 18)}<div>調移需經勞工<b>個人同意</b>（勞動部 104/04/23 函釋）。調移後 ${mdw(h.date)} 照常上班、出勤不加倍；新的日期放假並具國定假日性質，該日出勤仍加倍發給。此設定套用全體員工。</div></div>
+    <div><label for="hsTo">改到哪一天放假（原本要上班的平日）</label><input type="date" id="hsTo" name="to_date" required min="${h.date.slice(0, 4)}-01-01" max="${Number(h.date.slice(0, 4)) + 1}-12-31"></div>
+    <div><label for="hsNote">備註（選填）</label><input type="text" id="hsNote" name="note" maxlength="100" placeholder="例如：全體同仁同意，與 10/12 對調"></div>
+    ${actions('確認調移')}</form>`,
+  async (f) => { await api('/api/admin/holidays/swap', { method: 'POST', body: { date: h.date, ...formData(f) } }); toast('已調移', 'ok'); loadHolidays(); }, { title: '調移國定假日', icon: 'repeat' });
+}
+function holDelete(h) {
+  const swap = h.kind === 'swap_in' || h.kind === 'swap_out';
+  modal(`<form class="form-grid"><p style="margin:0">${swap ? `取消調移後，${esc(h.name.replace('（調移）', ''))}會回到原本的日期放假。` : `確定刪除公司自訂假日「${esc(h.name)}」（${mdw(h.date)}）？當天會改為正常上班日。`}</p>${actions(swap ? '取消調移' : '刪除', true)}</form>`,
+    async () => { await api('/api/admin/holidays/changes/' + h.change_id, { method: 'DELETE' }); toast(swap ? '已取消調移' : '已刪除', 'ok'); loadHolidays(); }, { title: swap ? '取消調移' : '刪除公司自訂假日', icon: swap ? 'undo' : 'trash', danger: true });
+}
+$('holPrev').onclick = () => { holYear = holCur.years[holCur.years.indexOf(holYear) - 1] || holYear - 1; loadHolidays(); };
+$('holNext').onclick = () => { holYear = holCur.years[holCur.years.indexOf(holYear) + 1] || holYear + 1; loadHolidays(); };
+$('holAdd').onclick = () => modal(`<form class="form-grid">
+    <div><label for="hcDate">日期</label><input type="date" id="hcDate" name="date" required value="${holYear && String(holYear) !== taipeiToday().slice(0, 4) ? `${holYear}-01-02` : taipeiToday()}"></div>
+    <div><label for="hcName">假日名稱</label><input type="text" id="hcName" name="name" required maxlength="20" placeholder="例如：公司週年慶、尾牙隔天"></div>
+    <div><label for="hcNote">備註（選填）</label><input type="text" id="hcNote" name="note" maxlength="100"></div>
+    <p class="help" style="margin:0">${icon('info', 14)} 公司自訂假日為公司給的有薪假：當天不需請假、不算遲到；月薪照給，時薪人員不另計（如要給薪請用薪資調整）。不具國定假日性質，出勤依平日計。</p>
+    ${actions('新增')}</form>`,
+  async (f) => { await api('/api/admin/holidays/custom', { method: 'POST', body: formData(f) }); toast('已新增公司自訂假日', 'ok'); holYear = Number(f.date.value.slice(0, 4)); loadHolidays(); }, { title: '新增公司自訂假日', icon: 'flag' });
 
 init();

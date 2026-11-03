@@ -897,3 +897,57 @@ table.send-list .em { font-family: var(--mono, ui-monospace, monospace); font-si
 .rc-email.err { border-color: var(--danger); }
 .rc-saved { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--success); display: grid; }
 .rc-st:empty { display: none; }
+
+/* ---------- 國定假日行事曆 ---------- */
+.b-holiday { background: var(--brand-soft); color: var(--brand-text); border-color: var(--brand-soft-2); }
+.chip.holiday { background: color-mix(in srgb, var(--hero-text) 18%, transparent); border-color: color-mix(in srgb, var(--hero-text) 45%, transparent); }
+.day.is-hol { background: color-mix(in srgb, var(--brand-soft) 45%, var(--surface)); }
+.day.is-hol .day-times { color: var(--brand-text); font-weight: 600; }
+.cal .cal-day.hol { background: color-mix(in srgb, var(--brand-soft) 70%, var(--surface)); }
+.cal .cal-hol { font-size: 11px; font-weight: 600; color: var(--brand-text); line-height: 1.25; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 4px; }
+.cal-legend i.lg-hol { background: color-mix(in srgb, var(--brand-soft) 70%, var(--surface)); border: 1px solid var(--brand-soft-2); }
+@media (max-width: 700px) { .cal .cal-n { flex-direction: column; align-items: flex-start; } .cal .cal-hol { font-size: 9.5px; margin: 0; max-width: 100%; text-align: left; } }
+
+.hol-bar .hol-year { margin: 0; font-size: var(--fs-lg, 18px); min-width: 72px; text-align: center; }
+.hol-bar .badges { margin-left: auto; }
+.hol-list { display: grid; gap: 14px; margin-top: 16px; }
+.hol-month { padding: 6px 0; }
+.hol-month h3 { margin: 0; padding: 12px 18px 8px; font-size: var(--fs-sm); color: var(--muted); font-weight: 700; letter-spacing: .04em; }
+.hol-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.hol-row:first-of-type { border-top: 0; }
+.hol-date { display: grid; justify-items: center; gap: 2px; padding: 8px 0; border-radius: 12px; background: var(--brand-soft); color: var(--brand-text); }
+.hol-date b { font-size: 17px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.hol-date span { font-size: var(--fs-xs); }
+.hol-row.is-wknd .hol-date, .hol-row.is-work .hol-date { background: var(--surface-2); color: var(--text-2); }
+.hol-row.is-work .hol-name { color: var(--text-2); }
+.hol-name { font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+.hol-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; }
+.hol-note { font-size: var(--fs-sm); color: var(--muted); }
+.hol-act { display: flex; justify-content: flex-end; }
+.hol-sw { min-height: 36px; gap: 8px; }
+.hol-sw .d { font-size: var(--fs-sm); color: var(--text-2); }
+.hol-rules { margin-top: 16px; padding: 4px 18px; }
+.hol-rules summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700; padding: 12px 0; list-style: none; }
+.hol-rules summary::-webkit-details-marker { display: none; }
+.hol-rules ul { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 8px; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.65; }
+.hol-rules a { color: var(--brand-text); }
+@media (max-width: 760px) {
+  .hol-bar .badges { margin-left: 0; width: 100%; }
+  .hol-row { grid-template-columns: 54px minmax(0, 1fr); gap: 10px 12px; padding: 12px 14px; }
+  .hol-act { grid-column: 2; justify-content: flex-start; }
+  .hol-act:empty { display: none; }
+  .hol-month h3 { padding: 12px 14px 6px; }
+}
+
+.pay-hol { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px; margin-top: 16px; }
+.pay-hol .ph-l { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--text-2); font-size: var(--fs-sm); margin-right: 4px; }
+.pay-hol .ph-sum { margin-left: auto; font-size: var(--fs-sm); color: var(--text-2); }
+.pay-hol .ph-sum b { color: var(--brand-text); }
+@media (max-width: 760px) { .pay-hol .ph-sum { margin-left: 0; width: 100%; } }
+
+.hol-up { margin-top: 14px; padding: 12px 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.hol-up .hu-t { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: var(--fs-sm); color: var(--brand-text); }
+.hol-up .hu-t .muted { margin-left: auto; font-weight: 400; font-size: var(--fs-xs); }
+.hol-up .hu-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.hol-up .hu-i { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--text); font-size: var(--fs-sm); }
+.hol-up .hu-i b { color: var(--brand-text); }
