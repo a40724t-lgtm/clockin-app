@@ -1,101 +1,97 @@
 /* =========================================================
-   員工打卡系統 — 設計系統（淺奶茶／莫蘭迪）
-   只用 3 個顏色＋白色背景：主色調（淺奶茶）、文字色（暖灰棕）、重點色（淺莫蘭迪玫瑰）
-   淺色填色（按鈕、徽章）上一律用文字色；主色／重點色當「文字」時用同色相的深色版，維持 AA 對比。
-   其他顏色（邊框、次要文字、淡底色、狀態色）都由這 3 色調出深淺，不加入其他色相。
+   員工打卡系統 — 設計系統（奶茶／莫蘭迪）
+   只用 3 個顏色＋白色背景：主色調（奶茶）、文字色（暖灰棕）、重點色（莫蘭迪玫瑰）
+   其他所有顏色（邊框、次要文字、淡底色、狀態色）都由這 3 色調出深淺，不另外加入色相。
    ========================================================= */
 :root {
   color-scheme: light;
   /* ★ 三個基本色 */
-  --c-primary: #C4A994;        /* 主色調：淺奶茶（文字色在上 4.9:1） */
-  --c-text: #433C36;           /* 文字色：暖灰棕（白底 10.8:1） */
-  --c-accent: #CBA59A;         /* 重點色：淺莫蘭迪玫瑰（文字色在上 4.8:1） */
-  --c-bg: #ffffff;             /* 背景：白 */
-  /* 同色相深色版：只用在「主色／重點色當文字」時（白底 4.7:1） */
-  --c-primary-deep: #88664B;
-  --c-accent-deep: #985F4E;
-  --on-primary: var(--c-text); --on-accent: var(--c-text);
+  --c-primary: #8F6E56;   /* 主色調：奶茶（白字對比 4.6:1） */
+  --c-text: #3E3833;      /* 文字色：暖灰棕（對白底 11.6:1） */
+  --c-accent: #A06357;    /* 重點色：莫蘭迪玫瑰（白字對比 4.8:1） */
+  --c-bg: #ffffff;        /* 背景：白 */
+  --on-primary: #ffffff; --on-accent: #ffffff;
 
   /* 由三色衍生（同色相的深淺） */
   --bg: var(--c-bg);
   --bg-grad: linear-gradient(var(--c-bg), var(--c-bg));
   --surface: var(--c-bg);
-  --surface-2: color-mix(in srgb, var(--c-primary) 8%, var(--c-bg));
-  --surface-3: color-mix(in srgb, var(--c-primary) 15%, var(--c-bg));
-  --line: color-mix(in srgb, var(--c-text) 10%, var(--c-bg));
-  --line-strong: color-mix(in srgb, var(--c-text) 20%, var(--c-bg));
+  --surface-2: color-mix(in srgb, var(--c-primary) 6%, var(--c-bg));
+  --surface-3: color-mix(in srgb, var(--c-primary) 12%, var(--c-bg));
+  --line: color-mix(in srgb, var(--c-text) 12%, var(--c-bg));
+  --line-strong: color-mix(in srgb, var(--c-text) 24%, var(--c-bg));
   --text: var(--c-text);
-  --text-2: color-mix(in srgb, var(--c-text) 88%, var(--c-bg));
-  --muted: color-mix(in srgb, var(--c-text) 74%, var(--c-bg));   /* 白底約 4.8:1 */
+  --text-2: color-mix(in srgb, var(--c-text) 85%, var(--c-bg));
+  --muted: color-mix(in srgb, var(--c-text) 70%, var(--c-bg));   /* 4.6:1 */
   --brand: var(--c-primary);
-  --brand-hover: color-mix(in srgb, var(--c-primary) 88%, var(--c-text));
-  --brand-text: var(--c-primary-deep);
-  --brand-soft: color-mix(in srgb, var(--c-primary) 16%, var(--c-bg));
-  --brand-soft-2: color-mix(in srgb, var(--c-primary) 38%, var(--c-bg));
+  --brand-hover: color-mix(in srgb, var(--c-primary) 82%, var(--c-text));
+  --brand-text: color-mix(in srgb, var(--c-primary) 85%, var(--c-text));
+  --brand-soft: color-mix(in srgb, var(--c-primary) 12%, var(--c-bg));
+  --brand-soft-2: color-mix(in srgb, var(--c-primary) 28%, var(--c-bg));
   --accent: var(--c-accent);
-  --accent-hover: color-mix(in srgb, var(--c-accent) 88%, var(--c-text));
-  --accent-text: var(--c-accent-deep);
-  --accent-soft: color-mix(in srgb, var(--c-accent) 16%, var(--c-bg));
-  --accent-line: color-mix(in srgb, var(--c-accent) 55%, var(--c-bg));
+  --accent-hover: color-mix(in srgb, var(--c-accent) 82%, var(--c-text));
+  --accent-text: color-mix(in srgb, var(--c-accent) 88%, var(--c-text));
+  --accent-soft: color-mix(in srgb, var(--c-accent) 11%, var(--c-bg));
+  --accent-line: color-mix(in srgb, var(--c-accent) 38%, var(--c-bg));
 
   /* 狀態色：全部用三色表達
-     成功／核准＝主色；警告＝重點色外框；錯誤／拒絕＝重點色淡底；資訊＝文字色 */
+     成功／核准＝主色；警告＝重點色外框；錯誤／拒絕＝重點色實心淡底；資訊＝文字色 */
   --success: var(--brand-text); --success-bg: var(--brand-soft); --success-line: var(--brand-soft-2);
   --warning: var(--accent-text); --warning-bg: var(--c-bg);       --warning-line: var(--accent-line);
   --danger: var(--accent-text);  --danger-bg: var(--accent-soft); --danger-line: var(--accent-line);
-  --info: var(--c-text);         --info-bg: color-mix(in srgb, var(--c-text) 5%, var(--c-bg)); --info-line: color-mix(in srgb, var(--c-text) 16%, var(--c-bg));
+  --info: var(--c-text);         --info-bg: color-mix(in srgb, var(--c-text) 6%, var(--c-bg)); --info-line: color-mix(in srgb, var(--c-text) 20%, var(--c-bg));
   --wfh: var(--brand-text);      --wfh-bg: var(--c-bg);            --wfh-line: var(--brand-soft-2);
-  --neutral-bg: color-mix(in srgb, var(--c-text) 5%, var(--c-bg));
-  --overlay: color-mix(in srgb, var(--c-text) 38%, transparent);
+  --neutral-bg: color-mix(in srgb, var(--c-text) 6%, var(--c-bg));
+  --overlay: color-mix(in srgb, var(--c-text) 45%, transparent);
   /* 形狀與陰影 */
   --r-sm: 10px; --r: 14px; --r-lg: 20px; --r-xl: 28px; --r-pill: 999px;
-  --sh-1: 0 1px 2px rgba(67, 60, 54, .05), 0 1px 3px rgba(67, 60, 54, .04);
-  --sh-2: 0 6px 16px -6px rgba(67, 60, 54, .12), 0 2px 6px -2px rgba(67, 60, 54, .06);
-  --sh-3: 0 24px 48px -12px rgba(67, 60, 54, .24);
-  --ring: 0 0 0 3px color-mix(in srgb, var(--c-primary) 45%, transparent);
+  --sh-1: 0 1px 2px rgba(62, 56, 51, .06), 0 1px 3px rgba(62, 56, 51, .05);
+  --sh-2: 0 6px 16px -6px rgba(62, 56, 51, .14), 0 2px 6px -2px rgba(62, 56, 51, .07);
+  --sh-3: 0 24px 48px -12px rgba(62, 56, 51, .28);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--c-primary) 35%, transparent);
   /* 字體 */
   --font: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", "Heiti TC", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --fs-xs: 12px; --fs-sm: 13px; --fs-base: 15px; --fs-md: 17px; --fs-lg: 20px; --fs-xl: 24px; --fs-2xl: 30px;
-  /* 英雄區（員工打卡頁上方時鐘）：淺奶茶漸層＋文字色 */
-  --hero: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 55%, var(--c-bg)) 0%, color-mix(in srgb, var(--c-primary) 80%, var(--c-bg)) 55%, var(--c-primary) 100%);
-  --hero-text: var(--c-text);
-  --hero-shadow: color-mix(in srgb, var(--c-primary) 45%, transparent);
+  /* 英雄區（員工打卡頁上方時鐘） */
+  --hero: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 88%, var(--c-bg)) 0%, var(--c-primary) 50%, color-mix(in srgb, var(--c-primary) 78%, var(--c-text)) 100%);
+  --hero-text: #ffffff;
+  --hero-shadow: color-mix(in srgb, var(--c-primary) 55%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --c-primary: #BFA38D;   /* 柔和奶茶（深底 7.0:1） */
-    --c-text: #E6DDD5;      /* 淺暖白（深底 12.5:1） */
-    --c-accent: #C9A196;    /* 柔和莫蘭迪玫瑰（深底 7.2:1） */
-    --c-bg: #221D1A;        /* 深暖咖啡 */
-    --c-primary-deep: var(--c-primary);
-    --c-accent-deep: var(--c-accent);
-    --on-primary: var(--c-bg); --on-accent: var(--c-bg);
+    --c-primary: #C9A88D;   /* 淺奶茶 */
+    --c-text: #EDE6DF;      /* 淺暖白 */
+    --c-accent: #D9A397;    /* 淺莫蘭迪玫瑰 */
+    --c-bg: #1F1B18;        /* 深暖咖啡 */
+    --on-primary: #1F1B18; --on-accent: #1F1B18;
     --surface: color-mix(in srgb, var(--c-text) 4%, var(--c-bg));
     --surface-2: color-mix(in srgb, var(--c-text) 7%, var(--c-bg));
     --surface-3: color-mix(in srgb, var(--c-text) 11%, var(--c-bg));
-    --line: color-mix(in srgb, var(--c-text) 12%, var(--c-bg));
-    --line-strong: color-mix(in srgb, var(--c-text) 20%, var(--c-bg));
-    --muted: color-mix(in srgb, var(--c-text) 66%, var(--c-bg));
-    --brand-hover: color-mix(in srgb, var(--c-primary) 88%, var(--c-text));
-    --brand-soft: color-mix(in srgb, var(--c-primary) 13%, var(--c-bg));
-    --brand-soft-2: color-mix(in srgb, var(--c-primary) 30%, var(--c-bg));
-    --accent-hover: color-mix(in srgb, var(--c-accent) 88%, var(--c-text));
-    --accent-soft: color-mix(in srgb, var(--c-accent) 13%, var(--c-bg));
+    --line: color-mix(in srgb, var(--c-text) 13%, var(--c-bg));
+    --line-strong: color-mix(in srgb, var(--c-text) 22%, var(--c-bg));
+    --muted: color-mix(in srgb, var(--c-text) 65%, var(--c-bg));
+    --brand-hover: color-mix(in srgb, var(--c-primary) 85%, var(--c-text));
+    --brand-text: var(--c-primary);
+    --brand-soft: color-mix(in srgb, var(--c-primary) 14%, var(--c-bg));
+    --brand-soft-2: color-mix(in srgb, var(--c-primary) 32%, var(--c-bg));
+    --accent-hover: color-mix(in srgb, var(--c-accent) 85%, var(--c-text));
+    --accent-text: var(--c-accent);
+    --accent-soft: color-mix(in srgb, var(--c-accent) 14%, var(--c-bg));
     --accent-line: color-mix(in srgb, var(--c-accent) 40%, var(--c-bg));
     --warning-bg: transparent;
     --wfh-bg: transparent;
-    --info-bg: color-mix(in srgb, var(--c-text) 6%, var(--c-bg));
-    --info-line: color-mix(in srgb, var(--c-text) 20%, var(--c-bg));
+    --info-bg: color-mix(in srgb, var(--c-text) 7%, var(--c-bg));
+    --info-line: color-mix(in srgb, var(--c-text) 22%, var(--c-bg));
     --neutral-bg: color-mix(in srgb, var(--c-text) 8%, var(--c-bg));
-    --overlay: rgba(12, 10, 9, .58);
+    --overlay: rgba(10, 8, 7, .6);
     --sh-1: 0 1px 2px rgba(0, 0, 0, .3);
-    --sh-2: 0 8px 20px -8px rgba(0, 0, 0, .5);
-    --sh-3: 0 24px 48px -12px rgba(0, 0, 0, .65);
-    --hero: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 26%, var(--c-bg)) 0%, color-mix(in srgb, var(--c-primary) 17%, var(--c-bg)) 60%, color-mix(in srgb, var(--c-primary) 10%, var(--c-bg)) 100%);
+    --sh-2: 0 8px 20px -8px rgba(0, 0, 0, .55);
+    --sh-3: 0 24px 48px -12px rgba(0, 0, 0, .7);
+    --hero: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 30%, var(--c-bg)) 0%, color-mix(in srgb, var(--c-primary) 20%, var(--c-bg)) 60%, color-mix(in srgb, var(--c-primary) 12%, var(--c-bg)) 100%);
     --hero-text: var(--c-text);
-    --hero-shadow: rgba(0, 0, 0, .45);
+    --hero-shadow: rgba(0, 0, 0, .5);
   }
 }
 
@@ -298,8 +294,8 @@ input[type=checkbox].switch:checked::before { transform: translateX(18px); }
 .punch .p-ic { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: rgba(255,255,255,.18); }
 .punch .p-label { font-size: 22px; font-weight: 700; line-height: 1.2; letter-spacing: .04em; }
 .punch .p-sub { display: block; font-size: var(--fs-sm); font-weight: 500; opacity: .9; margin-top: 4px; letter-spacing: 0; }
-.punch.in { background: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 70%, var(--c-bg)) 0%, var(--c-primary) 100%); color: var(--on-primary); box-shadow: 0 14px 28px -12px color-mix(in srgb, var(--c-primary) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.15); }
-.punch.out { background: linear-gradient(150deg, color-mix(in srgb, var(--c-accent) 70%, var(--c-bg)) 0%, var(--c-accent) 100%); color: var(--on-accent); box-shadow: 0 14px 28px -12px color-mix(in srgb, var(--c-accent) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.15); }
+.punch.in { background: linear-gradient(150deg, color-mix(in srgb, var(--c-primary) 88%, #fff) 0%, var(--c-primary) 60%, color-mix(in srgb, var(--c-primary) 84%, #000) 100%); color: var(--on-primary); box-shadow: 0 14px 28px -12px color-mix(in srgb, var(--c-primary) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.15); }
+.punch.out { background: linear-gradient(150deg, color-mix(in srgb, var(--c-accent) 88%, #fff) 0%, var(--c-accent) 55%, color-mix(in srgb, var(--c-accent) 84%, #000) 100%); color: var(--on-accent); box-shadow: 0 14px 28px -12px color-mix(in srgb, var(--c-accent) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.15); }
 .punch:not(:disabled):hover { filter: brightness(1.05); }
 .punch:not(:disabled):active { transform: scale(.965); box-shadow: 0 4px 10px -6px rgba(0,0,0,.4); }
 .punch:disabled { background: var(--surface); color: var(--muted); box-shadow: none; border: 1.5px dashed var(--line-strong); cursor: not-allowed; }
@@ -722,8 +718,9 @@ textarea.plain { font-family: var(--font); font-size: var(--fs-base); min-height
 .lv-dest { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--info); font-weight: 600; }
 .opt-grid.kinds { grid-template-columns: repeat(3, 1fr); }
 .opt-grid.kinds .opt span { display: flex; gap: 6px; justify-content: center; align-items: center; }
-.opt.kind-wfh input:checked + span { background: var(--brand); border-color: var(--brand); color: var(--on-primary); }
-.opt.kind-trip input:checked + span { background: var(--c-text); border-color: var(--c-text); color: var(--c-bg); }
+.opt.kind-wfh input:checked + span { background: var(--wfh); border-color: var(--wfh); }
+.opt.kind-trip input:checked + span { background: var(--info); border-color: var(--info); }
+@media (prefers-color-scheme: dark) { .opt.kind-wfh input:checked + span, .opt.kind-trip input:checked + span { color: var(--c-bg); } }
 .form-sheet .fs-head .s-ic.wfh { background: var(--wfh-bg); color: var(--wfh); }
 .form-sheet .fs-head .s-ic.trip { background: var(--info-bg); color: var(--info); }
 .preview-box.wfh { border-color: var(--wfh-line); background: var(--wfh-bg); }

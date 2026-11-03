@@ -266,7 +266,7 @@ function celebrate(type, message) {
   </div>`;
   $('successOverlay').classList.remove('hidden');
   $('successOverlay').classList.add('show');
-  const css = getComputedStyle(document.documentElement), P = css.getPropertyValue('--c-primary').trim() || '#C4A994', A = css.getPropertyValue('--c-accent').trim() || '#CBA59A';
+  const css = getComputedStyle(document.documentElement), P = css.getPropertyValue('--c-primary').trim() || '#8F6E56', A = css.getPropertyValue('--c-accent').trim() || '#A06357';
   const colors = isIn ? [P, A, P, '#E8DCD2'] : [A, P, A, '#E8DCD2'];
   const conf = document.createElement('div'); conf.className = 'confetti';
   conf.innerHTML = Array.from({ length: 26 }, (_, i) => {
