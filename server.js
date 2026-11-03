@@ -139,8 +139,8 @@ function requireAdmin(req, res, next) {
 const MANAGER_ROUTES = [
   ['GET', /^\/me$/], ['PUT', /^\/password$/],
   ['GET', /^\/employees$/], ['GET', /^\/records$/], ['GET', /^\/leave-types$/],
-  ['GET', /^\/avail-periods$/], ['POST', /^\/avail-periods$/], ['PUT', /^\/avail-periods\/\d+$/], ['DELETE', /^\/avail-periods\/\d+$/],
-  ['GET', /^\/schedule$/], ['PUT', /^\/schedule\/entries$/], ['POST', /^\/schedule\/(copy|publish)$/], ['GET', /^\/shift-templates$/],
+  ['PUT', /^\/employees\/\d+\/(schedule-prefs|dayoff\/\d{4}-\d{2}-\d{2})$/],
+  ['GET', /^\/schedule$/], ['PUT', /^\/schedule\/entries$/], ['POST', /^\/schedule\/(copy|publish|reset)$/], ['GET', /^\/shift-templates$/],
   ['GET', /^\/leaves$/], ['POST', /^\/leaves\/\d+\/(approve|reject)$/], ['GET', /^\/leaves\/\d+\/attachment$/],
 ];
 function managerGuard(req, res, next) {
@@ -584,8 +584,8 @@ app.post('/api/admin/logout', (req, res) => {
 });
 app.use('/api/admin', requireAdmin);
 app.use('/api/admin', managerGuard);
-const AVAIL = require('./availability')({ app, db, audit, HOL, inTeam, requireEmployee, fmtDateTime, todayStr });
-SCHED = require('./schedule')({ app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, todayStr, AVAIL });
+const DAYOFF = require('./dayoff')({ app, db, audit, inTeam, requireEmployee, todayStr });
+SCHED = require('./schedule')({ app, db, audit, HOL, getSettings, getSetting, setSetting, inTeam, ownerOnly, requireEmployee, fmtDateTime, todayStr, DAYOFF });
 
 app.get('/api/admin/me', (req, res) => {
   if (req.role === 'manager') {
@@ -669,8 +669,9 @@ app.get('/api/admin/overview', (req, res) => {
 app.get('/api/admin/employees', (req, res) => {
   // 身分證字號只回傳遮罩（例如 A12****789），不回傳明碼
   // 主管只看到自己團隊的姓名與部門（不含 PIN、Email、身分證字號）
-  if (req.role === 'manager') return res.json(db.prepare('SELECT id,name,department FROM employees WHERE active=1 ORDER BY id').all().filter((e) => req.team.has(e.id)));
-  res.json(db.prepare('SELECT id,name,pin,note,email,department,is_sample,created_at,national_id_enc FROM employees WHERE active=1 ORDER BY id').all().map(({ national_id_enc, ...e }) => {
+  if (req.role === 'manager') return res.json(db.prepare('SELECT id,name,department,fixed_off,monthly_off,scheduling,pay_type FROM employees WHERE active=1 ORDER BY id').all().filter((e) => req.team.has(e.id)).map(({ pay_type, ...e }) => ({ ...e, fixed_off: DAYOFF.parseDays(e.fixed_off), scheduling: e.scheduling !== 0, staff: pay_type === 'hourly' ? 'part' : 'full' })));
+  res.json(db.prepare('SELECT id,name,pin,note,email,department,is_sample,created_at,national_id_enc,fixed_off,monthly_off,scheduling,pay_type FROM employees WHERE active=1 ORDER BY id').all().map(({ national_id_enc, fixed_off, ...e }) => {
+    e.fixed_off = DAYOFF.parseDays(fixed_off); e.scheduling = e.scheduling !== 0; e.staff = e.pay_type === 'hourly' ? 'part' : 'full'; delete e.pay_type;
     const v = national_id_enc ? PII.tryDecrypt(national_id_enc) : null;
     return { ...e, has_national_id: !!v, national_id_masked: v ? PII.maskId(v) : '', national_id_error: national_id_enc && !v ? '無法解密（加密金鑰可能已更換），請重新輸入' : '' };
   }));

@@ -22,7 +22,7 @@ const empAuth = async (id, pin) => ({ Authorization: `Bearer ${(await ok('POST',
 const put = (items, cookie = owner) => call('PUT', '/api/admin/schedule/entries', { items }, cookie);
 const W = (r, type, id, date) => r.warnings.filter((w) => w.type === type && (!id || w.employee_id === id) && (!date || w.date === date));
 
-let EMP, T;
+let EMP, T, SEED;
 before(async () => {
   srv = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR, PORT: String(PORT), PII_KEY: '' }, stdio: 'ignore' });
   for (let i = 0; i < 200; i++) { try { await fetch(BASE + '/api/public/info'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
@@ -30,13 +30,26 @@ before(async () => {
   EMP = Object.fromEntries((await ok('GET', '/api/admin/employees')).map((e) => [e.name.slice(-1), e]));
   await ok('POST', '/api/admin/managers', { name: '陳店長', username: '陳店長', password: 'store-pass-1', departments: ['門市部'] });
   mgr = (await call('POST', '/api/admin/login', { username: '陳店長', password: 'store-pass-1' }, '')).setCookie.split(';')[0];
-  T = Object.fromEntries((await ok('GET', '/api/admin/shift-templates')).templates.map((t) => [t.name, t]));
+  // 預設班別先記下來（第一個測試檢查），再換成測試用的固定班別（含休息時間、跨夜班）
+  SEED = (await ok('GET', '/api/admin/shift-templates')).templates;
+  for (const t of SEED) await ok('PUT', `/api/admin/shift-templates/${t.id}`, { ...t, active: false });
+  for (const [name, start, end, break_min, applies] of [['早班', '08:00', '16:30', 30, 'all'], ['全天', '09:00', '18:00', 60, 'all'], ['晚班', '14:00', '22:30', 30, 'all'], ['大夜班', '22:00', '07:00', 60, 'all']])
+    await ok('POST', '/api/admin/shift-templates', { name, start, end, break_min, applies, color: 'primary' });
+  const ACTIVE = (await ok('GET', '/api/admin/shift-templates')).templates.filter((t) => t.active);
+  T = Object.fromEntries(ACTIVE.map((t) => [t.name, t]));
 });
 after(() => { srv && srv.kill(); fs.rmSync(DATA_DIR, { recursive: true, force: true }); });
 
-test('班別：預設班別、跨夜時數、顏色只能用色票、驗證', async () => {
-  assert.deepEqual(Object.keys(T).sort(), ['全天', '大夜班', '早班', '晚班'].sort());
+test('班別：預設班別（正職／工讀）、跨夜時數、顏色只能用色票、適用對象、驗證', async () => {
+  assert.deepEqual(SEED.map((t) => `${t.name} ${t.start}-${t.end} ${t.applies_text} ${t.hours}h`), ['早班 08:00-17:00 正職班 9h', '晚班 12:00-21:00 正職班 9h', '午班 10:00-14:00 工讀班 4h', '晚間 17:00-21:00 工讀班 4h']);
+  assert.ok(SEED.every((t) => t.break_min === 0));
   assert.equal(T['全天'].hours, 8); assert.equal(T['大夜班'].overnight, true); assert.equal(T['大夜班'].hours, 8);
+  const pt = (await ok('POST', '/api/admin/shift-templates', { name: '工讀早', start: '06:00', end: '10:00', color: 'sand', applies: 'part' })).id;
+  const ptv = (await ok('GET', '/api/admin/shift-templates')).templates.find((x) => x.id === pt);
+  assert.equal(ptv.applies, 'part'); assert.equal(ptv.color, 'sand'); assert.equal(ptv.break_min, 0, '不填休息＝0');
+  assert.equal((await ok('POST', '/api/admin/shift-templates', { name: '亂填', start: '06:00', end: '10:00', applies: 'xx' })).status, 200);
+  assert.equal((await ok('GET', '/api/admin/shift-templates')).templates.find((x) => x.name === '亂填').applies, 'all', '不認得的適用對象＝都可以');
+  for (const x of (await ok('GET', '/api/admin/shift-templates')).templates.filter((y) => ['工讀早', '亂填'].includes(y.name))) await ok('PUT', `/api/admin/shift-templates/${x.id}`, { ...x, active: false });
   const id = (await ok('POST', '/api/admin/shift-templates', { name: '小夜', start: '16:00', end: '00:30', break_min: 30, color: '#ff0000' })).id;
   const t = (await ok('GET', '/api/admin/shift-templates')).templates.find((x) => x.id === id);
   assert.equal(t.overnight, true); assert.equal(t.hours, 8); assert.equal(t.color, 'primary', '非色票顏色改用主色');

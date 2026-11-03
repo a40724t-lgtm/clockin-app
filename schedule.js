@@ -8,7 +8,8 @@ const L = require('./leave');
 const H = 3600000;
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s || '');
-const COLORS = ['primary', 'accent', 'text', 'primary-soft', 'accent-soft', 'text-soft']; // 只用主色／重點色／文字色的深淺（奶茶色系）
+const COLORS = ['primary', 'primary-deep', 'primary-soft', 'sand', 'accent', 'accent-soft', 'text', 'text-soft']; // 只用主色／重點色／文字色的深淺（奶茶色系，無綠色）
+const APPLIES = { all: '都可以', full: '正職班', part: '工讀班' };
 const KINDS = { shift: '上班', rest: '休息日', regular: '例假' };
 const DAILY_MAX_H = 12, REST_MIN_H = 11, MONTH_OT_MAX_H = 46, MAX_STREAK = 6;
 const mins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
@@ -24,7 +25,10 @@ const shiftHours = (x) => { const { s, e } = span(x.date, x.start, x.end); retur
 const r2 = (n) => Math.round(n * 100) / 100;
 
 module.exports = function registerSchedule(ctx) {
-  const { app, db, audit, HOL, getSettings, inTeam, ownerOnly, requireEmployee, fmtDateTime, AVAIL } = ctx;
+  const { app, db, audit, HOL, getSettings, getSetting, setSetting, inTeam, ownerOnly, requireEmployee, fmtDateTime, DAYOFF } = ctx;
+  if (getSetting('sched_min_staff') === undefined) setSetting('sched_min_staff', '2'); // 每日最少上班人數（空白＝不檢查）
+  const minStaff = () => { const v = getSetting('sched_min_staff'); return v === '' || v == null ? null : Number(v); };
+  const isClosed = (d) => { const h = HOL.info(d); return !!(h && h.off && h.kind === 'custom'); }; // 公休（公司自訂假日）
   db.exec(`
 CREATE TABLE IF NOT EXISTS shift_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL,
@@ -45,15 +49,18 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
   PRIMARY KEY (week_start, employee_id)
 );
 `);
-  // 預設班別（第一次啟動）
+  if (!db.prepare('PRAGMA table_info(shift_templates)').all().some((c) => c.name === 'applies')) db.exec("ALTER TABLE shift_templates ADD COLUMN applies TEXT DEFAULT 'all'"); // 正職班／工讀班／都可以
+  // 預設班別（第一次啟動）：正職 早班 08–17、晚班 12–21；工讀 10–14、17–21
   if (!db.prepare('SELECT COUNT(*) c FROM shift_templates').get().c) {
-    const ins = db.prepare('INSERT INTO shift_templates(name,start,end,break_min,color,sort,created_at) VALUES(?,?,?,?,?,?,?)');
-    [['早班', '08:00', '16:30', 30, 'primary-soft'], ['全天', '09:00', '18:00', 60, 'primary'], ['晚班', '14:00', '22:30', 30, 'accent'], ['大夜班', '22:00', '07:00', 60, 'text']]
-      .forEach((t, i) => ins.run(...t, i, Date.now()));
+    const ins = db.prepare('INSERT INTO shift_templates(name,start,end,break_min,color,applies,sort,created_at) VALUES(?,?,?,?,?,?,?,?)');
+    [['早班', '08:00', '17:00', 'primary', 'full'], ['晚班', '12:00', '21:00', 'accent', 'full'], ['午班', '10:00', '14:00', 'sand', 'part'], ['晚間', '17:00', '21:00', 'accent-soft', 'part']]
+      .forEach(([n, a, b, c, ap], i) => ins.run(n, a, b, 0, c, ap, i, Date.now()));
   }
+  // 員工：排班中／不排班
+  if (!db.prepare('PRAGMA table_info(employees)').all().some((c) => c.name === 'scheduling')) db.exec('ALTER TABLE employees ADD COLUMN scheduling INTEGER DEFAULT 1');
 
   const templates = (all) => db.prepare(`SELECT * FROM shift_templates ${all ? '' : 'WHERE active=1'} ORDER BY sort, id`).all()
-    .map((t) => ({ ...t, active: !!t.active, hours: r2(shiftHours({ date: '2026-01-05', ...t })), overnight: mins(t.end) <= mins(t.start) }));
+    .map((t) => ({ ...t, applies: APPLIES[t.applies] ? t.applies : 'all', applies_text: APPLIES[t.applies] || APPLIES.all, active: !!t.active, hours: r2(shiftHours({ date: '2026-01-05', ...t })), overnight: mins(t.end) <= mins(t.start) }));
   const entryView = (x) => x && ({
     employee_id: x.employee_id, date: x.date, kind: x.kind, kind_text: KINDS[x.kind], template_id: x.template_id, name: x.name || '',
     start: x.start, end: x.end, break_min: x.break_min || 0, color: x.color || 'primary', note: x.note || '',
@@ -83,7 +90,7 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     const lastMonthEnd = (() => { const [y, m] = to.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); })();
     const all = loadEntries('schedule_entries', ids, wFrom < mFrom ? wFrom : mFrom, lastMonthEnd > L.addDays(to, 1) ? lastMonthEnd : L.addDays(to, 1));
     const lv = leaveDays(ids, from, to);
-    const av = AVAIL ? AVAIL.availMap(ids, from, to) : new Map();
+    const offs = DAYOFF ? DAYOFF.offMap(ids, from, to) : new Map();
     const out = [];
     const push = (employee_id, date, type, text) => { if (date >= from && date <= to) out.push({ employee_id, date, type, text }); };
     for (const id of ids) {
@@ -96,20 +103,21 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
         const prev = shifts[i - 1];
         if (prev && x.s - prev.e < REST_MIN_H * H) {
           const gap = r2((x.s - prev.e) / H);
-          push(id, x.date, gap < 0 ? 'overlap' : 'rest', gap < 0 ? '與前一天的班時間重疊' : `與前一班只間隔 ${gap} 小時，少於 11 小時（勞基法第 34 條）`);
+          push(id, x.date, gap < 0 ? 'overlap' : 'rest', gap < 0 ? '班距：與前一班時間重疊' : `班距：與前一班只隔 ${gap} 小時，未滿 11 小時（勞基法第 34 條）`);
         }
         const hol = HOL.info(x.date);
-        if (hol && hol.off) push(id, x.date, 'holiday', `${hol.name}（${hol.kind_text}）：出勤需經勞工同意，國定假日工資加倍發給`);
+        if (hol && hol.off && hol.kind !== 'custom') push(id, x.date, 'holiday', `${hol.name}（${hol.kind_text}）：出勤需經勞工同意，國定假日工資加倍發給`);
         const l = lv.find((d) => d.employee_id === id && d.date === x.date && d.kind === 'leave');
         if (l) push(id, x.date, 'leave', `當天已核准${l.type_name}${l.full ? '（全天）' : '（部分時段）'}`);
-        const a = av.get(`${id}|${x.date}`);
-        if (a && a.status === 'no') push(id, x.date, 'unavail', `員工登記這天不行上班${a.note ? `（${a.note}）` : ''}`);
+        const o = offs.get(`${id}|${x.date}`);
+        if (o) push(id, x.date, 'dayoff', `不可排班：${o.text}`);
+        if (isClosed(x.date)) push(id, x.date, 'closed', `${HOL.info(x.date).name}（公休）`);
       }
       // 連續上班天數（例假／休息日／沒有排班都會中斷）
       let streak = 0;
       for (let d = wFrom; d <= L.addDays(to, 0); d = L.addDays(d, 1)) {
         const x = byDate.get(d);
-        if (x && x.kind === 'shift') { streak++; if (streak === MAX_STREAK + 1) push(id, d, 'streak', `連續上班第 ${streak} 天，未排例假（每 7 日應有 1 日例假、1 日休息日，勞基法第 36 條）`); }
+        if (x && x.kind === 'shift') { streak++; if (streak === MAX_STREAK + 1) push(id, d, 'streak', `七休一：連續上班第 ${streak} 天（勞基法第 36 條：每 7 日至少休 1 日例假）`); }
         else streak = 0;
       }
       // 每月加班估計：每日超過標準工時的部分＋休息日出勤（本系統以排班日判斷，例假／休息日不排班）
@@ -130,7 +138,7 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
   const scopeIds = (req) => db.prepare('SELECT id FROM employees WHERE active=1 ORDER BY id').all().map((e) => e.id).filter((id) => inTeam(req, id));
 
   // ---------- 班別 ----------
-  app.get('/api/admin/shift-templates', (req, res) => res.json({ templates: templates(req.role === 'owner'), colors: COLORS }));
+  app.get('/api/admin/shift-templates', (req, res) => res.json({ templates: templates(req.role === 'owner'), colors: COLORS, applies: APPLIES, min_staff: minStaff() }));
   function parseTemplate(b) {
     const name = String(b.name || '').trim();
     if (!name || name.length > 10) return { error: '班別名稱請輸入 1～10 個字' };
@@ -139,14 +147,15 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     const br = Number(b.break_min || 0);
     if (!Number.isInteger(br) || br < 0 || br > 240) return { error: '休息時間請填 0～240 分鐘' };
     const color = COLORS.includes(b.color) ? b.color : 'primary';
+    const applies = APPLIES[b.applies] ? b.applies : 'all';
     const h = shiftHours({ date: '2026-01-05', start: b.start, end: b.end, break_min: br });
     if (h <= 0) return { error: '扣掉休息後工時必須大於 0' };
-    return { name, start: b.start, end: b.end, break_min: br, color };
+    return { name, start: b.start, end: b.end, break_min: br, color, applies };
   }
   app.post('/api/admin/shift-templates', ownerOnly, (req, res) => {
     const v = parseTemplate(req.body || {}); if (v.error) return res.status(400).json({ error: v.error });
-    const r = db.prepare('INSERT INTO shift_templates(name,start,end,break_min,color,sort,created_at) VALUES(?,?,?,?,?,?,?)').run(v.name, v.start, v.end, v.break_min, v.color, Date.now() % 1e6, Date.now());
-    audit('新增班別', `${v.name} ${v.start}～${v.end}${mins(v.end) <= mins(v.start) ? '（跨夜）' : ''}，休息 ${v.break_min} 分`);
+    const r = db.prepare('INSERT INTO shift_templates(name,start,end,break_min,color,applies,sort,created_at) VALUES(?,?,?,?,?,?,?,?)').run(v.name, v.start, v.end, v.break_min, v.color, v.applies, Date.now() % 1e6, Date.now());
+    audit('新增班別', `${v.name} ${v.start}～${v.end}${mins(v.end) <= mins(v.start) ? '（跨夜）' : ''}｜${APPLIES[v.applies]}`);
     res.json({ ok: true, id: r.lastInsertRowid });
   });
   app.put('/api/admin/shift-templates/:id', ownerOnly, (req, res) => {
@@ -154,7 +163,7 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     if (!t) return res.status(404).json({ error: '找不到班別' });
     const v = parseTemplate(req.body || {}); if (v.error) return res.status(400).json({ error: v.error });
     const active = req.body.active === undefined ? t.active : (req.body.active ? 1 : 0);
-    db.prepare('UPDATE shift_templates SET name=?, start=?, end=?, break_min=?, color=?, active=? WHERE id=?').run(v.name, v.start, v.end, v.break_min, v.color, active, t.id);
+    db.prepare('UPDATE shift_templates SET name=?, start=?, end=?, break_min=?, color=?, applies=?, active=? WHERE id=?').run(v.name, v.start, v.end, v.break_min, v.color, v.applies, active, t.id);
     audit('修改班別', `${t.name}${t.name !== v.name ? `→${v.name}` : ''} ${v.start}～${v.end}，休息 ${v.break_min} 分${active ? '' : '（停用）'}；已排的班不受影響`);
     res.json({ ok: true });
   });
@@ -164,9 +173,12 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     const from = isDate(req.query.from) ? req.query.from : weekStart(ctx.todayStr());
     const to = isDate(req.query.to) ? req.query.to : L.addDays(from, 6);
     if (to < from || (Date.parse(to) - Date.parse(from)) / 86400000 > 62) return res.status(400).json({ error: '日期範圍錯誤（最多 62 天）' });
-    let ids = scopeIds(req);
-    if (req.query.employee_id) { const one = Number(req.query.employee_id); if (!ids.includes(one)) return res.status(403).json({ error: '這位員工不在您的團隊' }); ids = [one]; }
-    const emps = ids.length ? db.prepare(`SELECT id, name, department FROM employees WHERE id IN (${ids.join(',')}) ORDER BY department, id`).all() : [];
+    const all = scopeIds(req);
+    const on = new Set(all.length ? db.prepare(`SELECT id FROM employees WHERE scheduling<>0 AND id IN (${all.join(',')})`).all().map((e) => e.id) : []);
+    let ids = all.filter((id) => on.has(id)); // 「不排班」的員工不顯示在班表
+    const hidden = all.filter((id) => !on.has(id));
+    if (req.query.employee_id) { const one = Number(req.query.employee_id); if (!all.includes(one)) return res.status(403).json({ error: '這位員工不在您的團隊' }); ids = [one]; }
+    const emps = ids.length ? db.prepare(`SELECT id, name, department, fixed_off, monthly_off, pay_type FROM employees WHERE id IN (${ids.join(',')}) ORDER BY department, id`).all() : [];
     const draft = loadEntries('schedule_entries', ids, from, to).map(entryView);
     const pub = loadEntries('schedule_published', ids, from, to).map(entryView);
     // 每週發布狀態：已發布人數、草稿與已發布不同的筆數
@@ -184,9 +196,10 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     }
     const holidays = HOL.between(from, to).filter((h) => h.off || h.kind === 'swap_out' || h.kind === 'bridge')
       .map((h) => ({ date: h.date, name: h.name, kind: h.kind, kind_text: h.kind_text, off: !!h.off, paid_holiday: !!h.paid_holiday, weekend: !!h.weekend, change_id: h.change_id || null, adopted: !!h.adopted }));
-    const av = AVAIL ? [...AVAIL.availMap(ids, from, to).values()] : [];
-    res.json({ from, to, employees: emps, entries: draft, availability: av, avail_periods: AVAIL ? AVAIL.periodsBetween(req, from, to) : [], published: pub, weeks, leaves: leaveDays(ids, from, to), holidays, warnings: warningsFor(ids, from, to),
-      templates: templates(false), colors: COLORS, can_edit_holidays: req.role === 'owner', standard_hours: getSettings().standard_hours });
+    for (const e of emps) { e.fixed_off = DAYOFF ? DAYOFF.parseDays(e.fixed_off) : []; e.staff = e.pay_type === 'hourly' ? 'part' : 'full'; e.staff_text = e.staff === 'part' ? '工讀' : '正職'; delete e.pay_type; }
+    const hiddenEmps = hidden.length ? db.prepare(`SELECT id, name, department FROM employees WHERE id IN (${hidden.join(',')}) ORDER BY id`).all() : [];
+    res.json({ from, to, employees: emps, hidden_employees: hiddenEmps, entries: draft, dayoff: DAYOFF ? [...DAYOFF.offMap(ids, from, to).values()] : [], min_staff: minStaff(), published: pub, weeks, leaves: leaveDays(ids, from, to), holidays, warnings: warningsFor(ids, from, to),
+      templates: templates(false), colors: COLORS, applies: APPLIES, can_edit_holidays: req.role === 'owner', standard_hours: getSettings().standard_hours });
   });
 
   // 存檔（單筆或批次）：items = [{ employee_id, date, kind: shift|rest|regular|clear, template_id? | start,end,break_min, note? }]
@@ -235,7 +248,7 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
     if (Array.isArray(b.employee_ids) && b.employee_ids.length) { const want = b.employee_ids.map(Number); if (want.some((x) => !ids.includes(x))) return res.status(403).json({ error: '只能複製自己團隊的班' }); ids = want; }
     const src = loadEntries('schedule_entries', ids, b.source_week, L.addDays(b.source_week, 6));
     const now = Date.now(), by = req.actorName || '管理員';
-    let n = 0, skipped = 0;
+    let n = 0, skipped = 0, closed = 0;
     const has = db.prepare('SELECT 1 FROM schedule_entries WHERE employee_id=? AND date=?');
     const ins = db.prepare(`INSERT INTO schedule_entries(employee_id,date,kind,template_id,name,start,end,break_min,color,note,updated_at,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(employee_id,date) DO UPDATE SET kind=excluded.kind, template_id=excluded.template_id, name=excluded.name, start=excluded.start, end=excluded.end, break_min=excluded.break_min, color=excluded.color, note=excluded.note, updated_at=excluded.updated_at, updated_by=excluded.updated_by`);
@@ -244,13 +257,41 @@ CREATE TABLE IF NOT EXISTS schedule_weeks (
         const off = (Date.parse(w) - Date.parse(b.source_week)) / 86400000;
         for (const x of src) {
           const d = L.addDays(x.date, off);
+          if (isClosed(d)) { closed++; continue; } // 公休日不複製
           if (!b.overwrite && has.get(x.employee_id, d)) { skipped++; continue; }
           ins.run(x.employee_id, d, x.kind, x.template_id, x.name, x.start, x.end, x.break_min, x.color, x.note, now, by); n++;
         }
       }
     })();
     audit('複製班表', `${b.source_week} 那週 → ${targets.join('、')}，複製 ${n} 筆${skipped ? `（已有班表略過 ${skipped} 筆）` : ''}（草稿）`);
-    res.json({ ok: true, copied: n, skipped, warnings: warningsFor(ids, targets[0], L.addDays(targets[targets.length - 1], 6)) });
+    res.json({ ok: true, copied: n, skipped, closed, warnings: warningsFor(ids, targets[0], L.addDays(targets[targets.length - 1], 6)) });
+  });
+
+  // 排班設定：每日最少上班人數（空白＝不檢查）
+  app.get('/api/admin/schedule/settings', (req, res) => res.json({ min_staff: minStaff() }));
+  app.put('/api/admin/schedule/settings', ownerOnly, (req, res) => {
+    const v = req.body?.min_staff;
+    if (v === null || v === '' || v === undefined) setSetting('sched_min_staff', '');
+    else { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 99) return res.status(400).json({ error: '每日最少人數請填 1～99（空白＝不檢查）' }); setSetting('sched_min_staff', String(n)); }
+    audit('修改排班設定', `每日最少上班人數：${minStaff() ?? '不檢查'}`);
+    res.json({ ok: true, min_staff: minStaff() });
+  });
+  // 重設：捨棄這週尚未發布（未傳送）的變更 → 回到上次發布的內容；從未發布的週則清空
+  app.post('/api/admin/schedule/reset', (req, res) => {
+    const w = req.body?.week_start;
+    if (!isDate(w) || weekStart(w) !== w) return res.status(400).json({ error: '請選擇要重設的週（週一）' });
+    const ids = scopeIds(req), we = L.addDays(w, 6);
+    if (!ids.length) return res.status(400).json({ error: '沒有可重設的員工' });
+    const list = ids.join(','), now = Date.now(), by = req.actorName || '管理員';
+    const before = db.prepare(`SELECT COUNT(*) c FROM schedule_entries WHERE date>=? AND date<=? AND employee_id IN (${list})`).get(w, we).c;
+    db.transaction(() => {
+      db.prepare(`DELETE FROM schedule_entries WHERE date>=? AND date<=? AND employee_id IN (${list})`).run(w, we);
+      db.prepare(`INSERT INTO schedule_entries(employee_id,date,kind,template_id,name,start,end,break_min,color,note,updated_at,updated_by)
+        SELECT employee_id,date,kind,template_id,name,start,end,break_min,color,note,${now},? FROM schedule_published WHERE date>=? AND date<=? AND employee_id IN (${list})`).run(by, w, we);
+    })();
+    const after = db.prepare(`SELECT COUNT(*) c FROM schedule_entries WHERE date>=? AND date<=? AND employee_id IN (${list})`).get(w, we).c;
+    audit('重設班表', `${w}～${we}｜${ids.length} 位員工，回到上次發布的內容（${before} → ${after} 格）`);
+    res.json({ ok: true, entries: after });
   });
 
   // 發布／取消發布一週（只影響自己可管理的員工）

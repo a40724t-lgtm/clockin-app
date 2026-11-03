@@ -96,7 +96,7 @@ test('主管不能使用的 API 一律 403（薪資、身分證、寄信、設�
 test('主管只看到自己團隊：員工清單（無 PIN／Email／身分證）、打卡紀錄、請假', async () => {
   const emps = await ok('GET', '/api/admin/employees', null, mStore);
   assert.deepEqual(emps.map((e) => e.name).sort(), ['示範員工A', '示範員工B']);
-  for (const e of emps) assert.deepEqual(Object.keys(e).sort(), ['department', 'id', 'name']);
+  for (const e of emps) assert.deepEqual(Object.keys(e).sort(), ['department', 'fixed_off', 'id', 'monthly_off', 'name', 'scheduling', 'staff'], '只有姓名、部門與排班設定');
   const rec = await ok('GET', '/api/admin/records?from=2026-09-01&to=2026-11-30', null, mStore);
   const ids = new Set([...rec.daily, ...rec.punches, ...rec.blocked].map((x) => x.employee_id));
   assert.ok(rec.daily.length > 0); assert.ok(!ids.has(EMP.C.id)); assert.ok([...ids].every((i) => [EMP.A.id, EMP.B.id].includes(i)));

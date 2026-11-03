@@ -1,34 +1,40 @@
 // =========================================================
-// 排班（管理員：全部員工；主管：自己的團隊）＋ 假日設定（管理員）
+// 排班（管理員：全部員工；主管：自己的團隊）
+// 點格子 → 選班別 → 立即存檔（草稿）；按底部「發布」後員工才看得到
 // =========================================================
-const SCH = { view: 'week', anchor: null, day: null, dept: '', data: null, tab: 'cal' };
+const SCH = { view: 'week', anchor: null, dept: '', data: null, tab: 'cal' };
 const schMobile = matchMedia('(max-width: 760px)');
 const WD_ORDER = ['一', '二', '三', '四', '五', '六', '日'];
+const WD_SUN = ['日', '一', '二', '三', '四', '五', '六'];
 const mondayOf = (d) => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return addDays(d, -((w + 6) % 7)); };
 const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
 const monthEnd = (m) => { const [y, mm] = m.split('-').map(Number); return new Date(Date.UTC(y, mm, 0)).toISOString().slice(0, 10); };
-const isWkend = (d) => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; };
+const wdOfD = (d) => new Date(d + 'T00:00:00Z').getUTCDay();
+const isWkend = (d) => { const w = wdOfD(d); return w === 0 || w === 6; };
 const K = (e, d) => `${e}|${d}`;
+const hm = (t) => (t.endsWith(':00') ? String(Number(t.slice(0, 2))) : t.replace(/^0/, ''));
+const fitsStaff = (t, emp) => !t.applies || t.applies === 'all' || t.applies === emp.staff;
 
 function schRange() {
   if (SCH.view === 'week') return { from: SCH.anchor, to: addDays(SCH.anchor, 6) };
   const first = SCH.anchor.slice(0, 8) + '01', last = monthEnd(SCH.anchor.slice(0, 7));
-  return { from: mondayOf(first), to: addDays(mondayOf(last), 6), first, last };
+  return { from: first, to: last, first, last };
 }
 function setStab(t) {
   if (t === 'hol' && ROLE !== 'owner') t = 'cal';
-  SCH.tab = t;
+  if (!['cal', 'staff', 'tpl', 'hol'].includes(t)) t = 'cal';
+  SCH.tab = t; closePick();
   document.querySelectorAll('[data-stab]').forEach((b) => { const on = b.dataset.stab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
   document.querySelectorAll('[data-spane]').forEach((p) => p.classList.toggle('hidden', p.dataset.spane !== t));
   if (t === 'cal') loadSchedule();
+  if (t === 'staff') loadStaff();
   if (t === 'tpl') loadTemplates();
   if (t === 'hol') loadHolidays();
-  if (t === 'avail') loadAvailPeriods();
 }
 document.querySelectorAll('[data-stab]').forEach((b) => b.onclick = () => setStab(b.dataset.stab));
 function loadSchedulePage(tab) {
-  if (!SCH.anchor) { SCH.day = taipeiToday(); SCH.anchor = mondayOf(SCH.day); }
-  $('schHead').textContent = ROLE === 'manager' ? '安排您團隊的班表；發布後員工才看得到，打卡紀錄會依班表判斷遲到與早退' : '安排每週班表，發布後員工才看得到；打卡紀錄會依班表判斷遲到與早退';
+  if (!SCH.anchor) SCH.anchor = mondayOf(taipeiToday());
+  $('schHead').textContent = ROLE === 'manager' ? '點格子選班別就排好；按「發布」後您團隊的員工才看得到' : '點員工、選班別，排好一天；按「發布」後員工才看得到';
   setStab(tab || (SCH.tab === 'hol' && ROLE !== 'owner' ? 'cal' : SCH.tab));
 }
 
@@ -42,11 +48,9 @@ async function loadSchedule() {
     r.L = new Map(); for (const l of r.leaves) { const k = K(l.employee_id, l.date); if (!r.L.has(k)) r.L.set(k, []); r.L.get(k).push(l); }
     r.H = new Map(r.holidays.map((h) => [h.date, h]));
     r.W = new Map(); for (const w of r.warnings) { const k = K(w.employee_id, w.date); if (!r.W.has(k)) r.W.set(k, []); r.W.get(k).push(w); }
-    r.T = new Map(r.templates.map((t) => [t.id, t]));
-    r.A = new Map((r.availability || []).map((a) => [K(a.employee_id, a.date), a]));
-    setAvailCount((r.avail_periods || []).filter((p) => p.open).length);
+    r.O = new Map((r.dayoff || []).map((o) => [K(o.employee_id, o.date), o]));
     const depts = [...new Set(r.employees.map((e) => e.department).filter(Boolean))];
-    $('schDept').innerHTML = `<option value="">${ROLE === 'manager' ? '我的團隊' : '全部部門'}（${r.employees.length} 人）</option>` + depts.map((d) => `<option ${d === SCH.dept ? 'selected' : ''}>${esc(d)}</option>`).join('');
+    $('schDept').innerHTML = `<option value="">${ROLE === 'manager' ? '我的團隊' : '全部'}（${r.employees.length} 人）</option>` + depts.map((d) => `<option ${d === SCH.dept ? 'selected' : ''}>${esc(d)}</option>`).join('');
     $('schDept').classList.toggle('hidden', depts.length < 2);
     if (!depts.includes(SCH.dept)) SCH.dept = '';
     renderSchedule();
@@ -54,272 +58,308 @@ async function loadSchedule() {
 }
 const schEmps = () => SCH.data.employees.filter((e) => !SCH.dept || e.department === SCH.dept);
 const sameEntry = (a, b) => (!a && !b) || (a && b && ['kind', 'start', 'end', 'break_min', 'name', 'note'].every((k) => a[k] === b[k]));
+const isClosedDay = (d) => { const h = SCH.data.H.get(d); return !!(h && h.off && h.kind === 'custom'); };
+const fullLeave = (k) => (SCH.data.L.get(k) || []).find((l) => l.kind === 'leave');
 
 function chip(x, opts = {}) {
-  if (!x) return opts.empty ? `<span class="sc-empty">${icon('plus', 14)}</span>` : '';
-  if (x.kind === 'rest') return '<span class="sc sc-off"><b>休息日</b></span>';
-  if (x.kind === 'regular') return '<span class="sc sc-reg"><b>例假</b></span>';
-  return `<span class="sc sc-${esc(x.color || 'primary')}"><b>${esc(x.name)}</b>${opts.short ? '' : `<span>${x.start}–${x.overnight ? '翌' : ''}${x.end}</span>`}</span>`;
+  if (x.kind === 'rest' || x.kind === 'regular') return `<span class="sc sc-off"><b>${x.kind === 'regular' ? '例' : '休'}</b></span>`;
+  if (x.kind === 'leave') return '<span class="sc sc-leave"><b>假</b></span>';
+  return `<span class="sc sc-${esc(x.color || 'primary')}"><b>${esc(x.name)}</b>${opts.short ? '' : `<span>${hm(x.start)}–${x.overnight ? '翌' : ''}${hm(x.end)}</span>`}</span>`;
 }
-function cellInner(emp, d, opts = {}) {
-  const r = SCH.data, k = K(emp.id, d), x = r.E.get(k), lv = r.L.get(k) || [], w = r.W.get(k) || [];
-  const changed = !sameEntry(x, r.P.get(k)) && r.weeks.find((wk) => d >= wk.week_start && d <= wk.week_end)?.published_count;
-  const av = r.A.get(k);
-  return `${chip(x, { empty: true, short: opts.short })}
-    ${av ? avTag(av) : ''}
-    ${lv.map((l) => `<span class="sc-tag ${l.kind !== 'leave' ? 'is-work' : ''}">${icon(l.kind === 'wfh' ? 'home' : l.kind === 'trip' ? 'briefcase' : 'palm', 12)}${esc(l.type_name)}${l.full ? '' : '（部分）'}</span>`).join('')}
-    ${w.length ? `<span class="sc-warn" title="${esc(w.map((y) => y.text).join('\n'))}">${icon('alert', 12)}${w.length > 1 ? w.length : ''}<span class="sr-only">勞基法提醒：${esc(w.map((y) => y.text).join('；'))}</span></span>` : ''}
-    ${changed ? '<span class="sc-dirty" role="img" aria-label="尚未發布的變更" title="尚未發布的變更"></span>' : ''}`;
+// 一格的狀態
+function cellState(emp, d) {
+  const r = SCH.data, k = K(emp.id, d);
+  const x = r.E.get(k), p = r.P.get(k), lv = r.L.get(k) || [], w = r.W.get(k) || [], o = r.O.get(k), h = r.H.get(d);
+  return { k, x, p, lv, w, o, h, closed: isClosedDay(d), leave: fullLeave(k), dirty: !sameEntry(x, p) };
 }
-// 員工填的可上班狀態（小標記）
-const avTag = (a) => `<span class="av av-${a.status}" title="員工登記：${esc(a.status_text)}${a.note ? `｜${esc(a.note)}` : ''}">${icon(a.status === 'no' ? 'ban' : 'check', 11)}${esc(a.status === 'pref' ? a.template_name : a.status === 'no' ? '不行' : '可')}${a.note ? '<i>・備註</i>' : ''}</span>`;
-const holChip = (h, cls = '') => (h ? `<span class="sch-hol ${h.off ? '' : 'is-work'} ${cls}" title="${esc(h.kind_text)}">${icon(h.off ? 'flag' : 'repeat', 12)}${esc(h.off ? h.name : h.kind === 'bridge' ? `${h.name}（照常上班）` : '調移上班')}</span>` : '');
-
+function cellHtml(emp, d) {
+  const c = cellState(emp, d);
+  let inner;
+  if (c.x) inner = chip(c.x);
+  else if (c.leave) inner = chip({ kind: 'leave' });
+  else if (c.closed) inner = '<span class="cl">公休</span>';
+  else inner = `<span class="plus">${icon('plus', 14)}</span>`;
+  const marks = [
+    c.x && c.leave ? '<span class="mk-c lv">假</span>' : '',
+    c.o && !c.closed ? `<span class="mk-c no" title="${esc(c.o.text)}">不可</span>` : '',
+    c.w.length ? `<span class="mk-c warn" title="${esc(c.w.map((y) => y.text).join('\n'))}">!</span>` : '',
+    c.dirty ? '<span class="mk-c dirty" title="尚未發布"></span>' : c.x ? `<span class="mk-c pub" title="已發布">${icon('check', 9)}</span>` : '',
+  ].join('');
+  const label = [emp.name, mdw(d), c.x ? (c.x.kind === 'shift' ? c.x.name : c.x.kind_text) : c.leave ? '請假' : c.closed ? '公休' : '未排', c.o ? '不可排班' : '', c.w.length ? `${c.w.length} 項提醒` : '', c.x ? (c.dirty ? '未發布' : '已發布') : c.dirty ? '已清除未發布' : ''].filter(Boolean).join('，');
+  return `<button type="button" class="sg-cell ${c.closed ? 'is-closed' : ''} ${c.o ? 'is-off' : ''}" data-ce="${emp.id}" data-cd="${d}" aria-label="${esc(label)}">${inner}${marks}</button>`;
+}
+// 每位員工：上幾天・休幾天（月檢視 + 正職每月休假目標）
+function empCount(emp, days) {
+  const r = SCH.data; let work = 0, off = 0, lv = 0;
+  for (const d of days) {
+    const k = K(emp.id, d), x = r.E.get(k);
+    if (x && x.kind === 'shift') work++;
+    else if (x) off++;
+    else if (fullLeave(k)) lv++;
+    else if (isClosedDay(d)) off++;
+  }
+  return { work, off, lv };
+}
 function renderSchedule() {
-  const r = SCH.data, { from, to, first, last } = schRange();
-  const month = SCH.view === 'month';
-  $('schTitle').textContent = month ? `${Number(SCH.anchor.slice(0, 4))} 年 ${Number(SCH.anchor.slice(5, 7))} 月` : `${md(from)} ～ ${md(to)}`;
+  const r = SCH.data, { from, to } = schRange(), month = SCH.view === 'month';
+  $('schTitle').textContent = month ? `${Number(from.slice(0, 4))} 年 ${Number(from.slice(5, 7))} 月` : `${md(from)} ～ ${md(to)}`;
   $('schSub').textContent = month ? '' : `${from.slice(0, 4)} 年・週一至週日`;
   document.querySelectorAll('[data-sview]').forEach((b) => { const on = b.dataset.sview === SCH.view; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
-  ['schCopy', 'schRepeat'].forEach((id) => $(id).classList.toggle('hidden', month));
-  // 發布狀態
-  const hasAny = (w) => w.published_count || r.entries.some((x) => x.date >= w.week_start && x.date <= w.week_end);
-  const weeks = month ? r.weeks.filter((w) => w.week_end >= first && w.week_start <= last && hasAny(w)) : r.weeks;
-  $('schPub').innerHTML = weeks.map((w) => {
-    const st = w.status === 'published' ? `<span class="badge b-brand">${icon('check')}已發布</span>` : w.status === 'changed' ? `<span class="badge b-warning">${icon('alert')}已發布・有 ${w.changed} 項未發布變更</span>` : `<span class="badge b-neutral">${icon('pencil')}草稿・員工看不到</span>`;
-    return `<div class="pub-row ${w.status}"><div class="pub-txt">${month ? `<b>${md(w.week_start)}～${md(w.week_end)}</b>` : ''}${st}${w.published_text ? `<span class="muted">${esc(w.published_text)}</span>` : ''}</div>
-      <div class="pub-act">${w.published_count ? `<button class="btn ghost sm" data-unpub="${w.week_start}">取消發布</button>` : ''}${w.status !== 'published' ? `<button class="btn sm" data-pub="${w.week_start}">${icon('send', 15)}${w.published_count ? '重新發布' : '發布本週'}</button>` : ''}</div></div>`;
+  $('schCopy').classList.toggle('hidden', month); $('schReset').classList.toggle('hidden', month);
+  $('schLegend').innerHTML = `<span class="lg"><span class="mk mk-dirty"></span>未發布</span><span class="lg"><span class="mk mk-pub">${icon('check', 9)}</span>已發布</span><span class="lg"><span class="mk-c warn" style="position:static">!</span>勞基法提醒</span><span class="lg"><span class="mk-c no" style="position:static;transform:none">不可</span>不可排班</span>`;
+  const emps = schEmps();
+  const hid = r.hidden_employees || [];
+  $('schHidden').innerHTML = hid.length ? `<p class="sch-hidden">不排班（不顯示）：${hid.map((e) => esc(e.name)).join('、')}・<button type="button" data-gostaff>到「人員」調整</button></p>` : '';
+  $('schHidden').querySelectorAll('[data-gostaff]').forEach((b) => b.onclick = () => setStab('staff'));
+  if (!emps.length) { $('schCal').innerHTML = `<div class="card"><div class="empty"><span class="empty-ic">${icon('users', 24)}</span><b>沒有排班中的員工</b>${ROLE === 'manager' ? '您的團隊目前沒有排班中的員工' : '請先到「員工管理」新增員工，或在「人員」開啟排班'}</div></div>`; renderFoot([]); return; }
+  const days = []; for (let d = from; d <= to; d = addDays(d, 1)) days.push(d);
+  const today = taipeiToday(), min = r.min_staff;
+  const head = days.map((d) => {
+    const h = r.H.get(d), closed = isClosedDay(d);
+    const n = emps.filter((e) => { const x = r.E.get(K(e.id, d)); return x && x.kind === 'shift'; }).length;
+    const low = !closed && min && n < min;
+    const hc = closed ? '<span class="hc closed">公休</span>' : `<span class="hc ${low ? 'low' : ''}" title="${low ? `少於每日最少 ${min} 人` : '當天上班人數'}">${n}人</span>`;
+    return `<div class="sg-head ${isWkend(d) ? 'is-wk' : ''} ${d === today ? 'is-today' : ''} ${closed ? 'is-closed' : ''}" role="columnheader" aria-label="${mdw(d)}，${closed ? '公休' : `${n} 人上班${low ? '，人數不足' : ''}`}${h && !closed ? `，${esc(h.name)}` : ''}"><span class="dw">${month ? WD_SUN[wdOfD(d)] : `週${WD_SUN[wdOfD(d)]}`}</span><b>${month ? '' : `<span class="mo">${Number(d.slice(5, 7))}/</span>`}${Number(d.slice(8))}</b>${h && !closed ? `<span class="hn">${esc(h.off ? h.name : '補班')}</span>` : ''}${hc}</div>`;
   }).join('');
-  $('schPub').querySelectorAll('[data-pub]').forEach((b) => b.onclick = () => publishWeek(b.dataset.pub, false));
-  $('schPub').querySelectorAll('[data-unpub]').forEach((b) => b.onclick = () => publishWeek(b.dataset.unpub, true));
-  // 可上班時段登記進度
-  $('schAvail').innerHTML = (r.avail_periods || []).map((p) => `<div class="av-banner ${p.open ? 'open' : ''}">${icon('calendarCheck', 16)}<div><b>可上班時段 ${md(p.from)}～${md(p.to)}</b>
-      <span class="muted">${p.open ? `截止 ${mdw(p.deadline_text.slice(0, 10))}${p.deadline_text.slice(11)}` : '已截止'}・已提交 ${p.submitted_count}/${p.employee_count}</span>
-      ${p.missing.length ? `<span class="av-miss">未提交：${p.missing.map((m) => esc(m.name)).join('、')}</span>` : '<span class="av-miss done">全部已提交</span>'}</div>
-      <button type="button" class="btn ghost sm" data-avgo>查看</button></div>`).join('');
-  $('schAvail').querySelectorAll('[data-avgo]').forEach((b) => b.onclick = () => setStab('avail'));
-  // 提醒
-  const emps = schEmps(), ids = new Set(emps.map((e) => e.id));
-  const warns = r.warnings.filter((w) => ids.has(w.employee_id) && (!month || (w.date >= first && w.date <= last)));
+  const rows = emps.map((e) => {
+    const c = empCount(e, days);
+    const tgt = month && e.staff === 'full' && e.monthly_off != null ? e.monthly_off : null;
+    const bad = tgt != null && c.off !== tgt;
+    const cnt = `<span class="cnt ${bad ? 'bad' : ''}" ${bad ? `title="每月休假目標 ${tgt} 天，目前排 ${c.off} 天（${c.off > tgt ? '太多' : '太少'}）"` : ''}>上${c.work}・休${c.off}${tgt != null ? `/${tgt}` : ''}${c.lv ? `・假${c.lv}` : ''}</span>`;
+    return `<div class="sg-emp" role="rowheader">${avatar(e.name, 'sm')}<span class="en"><b>${esc(e.name)}</b><span class="sub"><span class="st-tag ${e.staff}">${esc(e.staff_text)}</span>${cnt}</span></span></div>${days.map((d) => cellHtml(e, d)).join('')}`;
+  }).join('');
+  const sc = $('schCal').querySelector('.sch-scroll'), keepX = sc ? sc.scrollLeft : 0;
+  $('schCal').innerHTML = `<div class="sch-scroll"><div class="sg ${month ? 'month' : 'week'}" role="grid" aria-label="${month ? '月班表' : '週班表'}" style="--nd:${days.length}${month ? ';--cw:46px' : ''}">
+    <div class="sg-head sg-corner">員工<span class="muted">${month ? '本月' : '本週'}</span></div>${head}${rows}</div></div>`;
+  $('schCal').querySelector('.sch-scroll').scrollLeft = keepX;
+  $('schCal').querySelectorAll('[data-ce]').forEach((b) => b.onclick = () => openPick(b));
+  renderFoot(emps, days);
+}
+// 底部：一行提醒摘要＋一顆大的發布按鈕
+function renderFoot(emps, days = []) {
+  const r = SCH.data, ids = new Set(emps.map((e) => e.id)), dset = new Set(days);
+  const warns = r.warnings.filter((w) => ids.has(w.employee_id) && dset.has(w.date));
   const nameOf = (id) => (r.employees.find((e) => e.id === id) || {}).name || '';
-  $('schWarn').innerHTML = warns.length ? `<details class="card sch-warns" ${warns.length <= (schMobile.matches ? 2 : 8) ? 'open' : ''}><summary>${icon('scale', 18)}<b>勞基法提醒 ${warns.length} 項</b><span class="muted">不會擋存檔，請確認是否需要調整</span></summary>
-    <ul>${warns.map((w, i) => `<li><button type="button" data-wi="${i}"><span class="w-when">${esc(nameOf(w.employee_id))}・${mdw(w.date)}</span><span class="w-text">${esc(w.text)}</span></button></li>`).join('')}</ul></details>` : '';
-  $('schWarn').querySelectorAll('[data-wi]').forEach((b) => b.onclick = () => { const w = warns[b.dataset.wi]; cellEditor(r.employees.find((e) => e.id === w.employee_id), w.date); });
-  // 圖例
-  $('schLegend').innerHTML = r.templates.map((t) => `<span class="lg">${chip({ ...t, kind: 'shift' }, { short: true })}<span>${t.start}–${t.overnight ? '翌' : ''}${t.end}</span></span>`).join('')
-    + `<span class="lg">${chip({ kind: 'rest' })}</span><span class="lg">${chip({ kind: 'regular' })}</span><span class="lg"><span class="sc-tag">${icon('palm', 12)}請假</span></span><span class="lg">${holChip({ off: true, name: '國定假日' })}</span><span class="lg"><span class="sc-dirty static"></span>未發布變更</span>${r.A.size ? `<span class="lg">${avTag({ status: 'ok', status_text: '可上班' })}${avTag({ status: 'pref', status_text: '想上', template_name: '早班' })}${avTag({ status: 'no', status_text: '不行' })}員工登記</span>` : ''}`;
-  if (!emps.length) { $('schCal').innerHTML = `<div class="card"><div class="empty"><span class="empty-ic">${icon('users', 24)}</span><b>沒有可排班的員工</b>${ROLE === 'manager' ? '您的團隊目前沒有在職員工' : '請先到「員工管理」新增員工'}</div></div>`; return; }
-  if (month) renderMonth(emps, first, last, from, to);
-  else if (schMobile.matches) renderWeekMobile(emps, from);
-  else renderWeekGrid(emps, from);
+  const weeks = r.weeks.filter((w) => days.some((d) => d >= w.week_start && d <= w.week_end));
+  // 未發布的格子（所有可管理的員工）
+  const dirtyIn = (w) => { let n = 0; const keys = new Set([...r.E.keys(), ...r.P.keys()]); for (const k of keys) { const d = k.split('|')[1]; if (d >= w.week_start && d <= w.week_end && !sameEntry(r.E.get(k), r.P.get(k))) n++; } return n; };
+  const todo = weeks.map((w) => ({ w, n: dirtyIn(w) })).filter((x) => x.n);
+  const total = todo.reduce((a, x) => a + x.n, 0), anyPub = weeks.some((w) => w.published_count);
+  const month = SCH.view === 'month';
+  let btn;
+  if (total) btn = `<button class="btn big" id="schPubBtn">${icon('send', 18)}${month ? `發布本月（${todo.length} 週・${total} 格未發布）` : `發布本週（${total} 格未發布）`}</button>`;
+  else if (anyPub) btn = `<button class="btn big done" id="schPubBtn" aria-disabled="true">${icon('check', 18)}${month ? '本月班表都已發布' : '本週已發布'}</button>`;
+  else btn = `<button class="btn big done" id="schPubBtn" aria-disabled="true">${icon('send', 18)}排好班後就可以發布</button>`;
+  $('schFoot').innerHTML = `${warns.length ? `<button type="button" class="sch-warnline" id="schWarnBtn">${icon('scale', 16)}<b>提醒 ${warns.length}</b><span>${esc(nameOf(warns[0].employee_id))} ${md(warns[0].date)} ${esc(warns[0].text)}</span>${icon('chevronRight', 16)}</button>` : ''}
+    <div class="sch-pubrow">${btn}${!month && anyPub ? '<button class="btn ghost sm" id="schUnpub">取消發布</button>' : ''}</div>`;
+  if ($('schWarnBtn')) $('schWarnBtn').onclick = () => modal(`<form class="form-grid"><ul class="w-ul" style="padding-left:18px;margin:0">${warns.map((w) => `<li><b>${esc(nameOf(w.employee_id))}・${mdw(w.date)}</b><br>${esc(w.text)}</li>`).join('')}</ul><p class="help" style="margin:0">提醒不會擋存檔或發布，請確認是否需要調整。</p><div class="actions"><button type="button" class="hidden" data-cancel></button><button class="btn" type="submit">知道了</button></div></form>`, async () => {}, { title: `勞基法提醒 ${warns.length} 項`, icon: 'scale' });
+  if (total) $('schPubBtn').onclick = () => publishWeeks(todo, warns.length);
+  if ($('schUnpub')) $('schUnpub').onclick = () => modal(`<form class="form-grid"><p style="margin:0">取消發布後，員工看不到 ${md(SCH.anchor)}～${md(addDays(SCH.anchor, 6))} 的班表，打卡紀錄改回依上班時間設定判斷遲到。</p>${actions('取消發布', true)}</form>`,
+    async () => { await api('/api/admin/schedule/publish', { method: 'POST', body: { week_start: SCH.anchor, unpublish: true } }); toast('已取消發布', 'ok'); loadSchedule(); }, { title: '取消發布', icon: 'undo', danger: true });
 }
-function bindCells(root) {
-  root.querySelectorAll('[data-ce]').forEach((b) => b.onclick = () => cellEditor(SCH.data.employees.find((e) => e.id == b.dataset.ce), b.dataset.cd));
-  root.querySelectorAll('[data-hgo]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); holYear = Number(b.dataset.hgo.slice(0, 4)); setStab('hol'); });
+function publishWeeks(todo, nw) {
+  const range = todo.length === 1 ? `${md(todo[0].w.week_start)}～${md(todo[0].w.week_end)}` : `${todo.length} 週`;
+  modal(`<form class="form-grid"><p style="margin:0">發布 ${range} 的班表給${ROLE === 'manager' ? '您團隊的' : ''}員工。員工會在打卡頁「班表」看到，打卡紀錄也會依此判斷遲到與早退。</p>
+    ${nw ? `<div class="alert warn">${icon('scale', 18)}<div>還有 <b>${nw}</b> 項勞基法提醒，仍可發布。</div></div>` : ''}${actions('發布')}</form>`,
+  async () => { for (const { w } of todo) await api('/api/admin/schedule/publish', { method: 'POST', body: { week_start: w.week_start } }); toast('已發布，員工可以看到班表', 'ok'); loadSchedule(); },
+  { title: '發布班表', icon: 'send' });
 }
-function weekHours(emp, from) {
-  let h = 0; for (let i = 0; i < 7; i++) { const x = SCH.data.E.get(K(emp.id, addDays(from, i))); if (x && x.kind === 'shift') h += x.hours; }
-  return +h.toFixed(2);
+
+// ---------- 點格子：班別選單（立即存檔） ----------
+let pickAt = null;
+function closePick() {
+  const p = $('schPick'), bg = $('schPickBg'); if (p) p.remove(); if (bg) bg.remove();
+  document.querySelectorAll('.sg-cell.is-picked').forEach((c) => c.classList.remove('is-picked'));
+  if (pickAt) { const c = document.querySelector(`[data-ce="${pickAt.emp}"][data-cd="${pickAt.d}"]`); pickAt = null; if (c) c.focus({ preventScroll: true }); }
 }
-function renderWeekGrid(emps, from) {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(from, i)), r = SCH.data, today = taipeiToday();
-  $('schCal').innerHTML = `<div class="sch-grid card" role="grid" aria-label="週班表">
-    <div class="sg-head sg-corner">員工<span class="muted">本週工時</span></div>
-    ${days.map((d, i) => { const h = r.H.get(d); return `<div class="sg-head ${h && h.off ? 'is-hol' : ''} ${isWkend(d) ? 'is-wk' : ''} ${d === today ? 'is-today' : ''}"><span class="dw">週${WD_ORDER[i]}</span><b>${md(d)}</b>${h ? (ROLE === 'owner' ? `<button type="button" class="hol-link" data-hgo="${d}">${holChip(h)}</button>` : holChip(h)) : ''}</div>`; }).join('')}
-    ${emps.map((e) => `<div class="sg-emp"><span class="who">${avatar(e.name, 'sm')}<span><b>${esc(e.name)}</b><span class="sub">${esc(e.department || '')}${e.department ? '・' : ''}${weekHours(e, from)} 小時</span></span></span></div>
-      ${days.map((d) => { const h = r.H.get(d); return `<button type="button" class="sg-cell ${h && h.off ? 'is-hol' : ''} ${isWkend(d) ? 'is-wk' : ''}" data-ce="${e.id}" data-cd="${d}" aria-label="${esc(e.name)} ${mdw(d)}">${cellInner(e, d)}</button>`; }).join('')}`).join('')}
-  </div>`;
-  bindCells($('schCal'));
-}
-function renderWeekMobile(emps, from) {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(from, i)), r = SCH.data, today = taipeiToday();
-  if (!days.includes(SCH.day)) SCH.day = days.includes(today) ? today : from;
-  const d = SCH.day, h = r.H.get(d);
-  const count = (x) => emps.filter((e) => { const y = r.E.get(K(e.id, x)); return y && y.kind === 'shift'; }).length;
-  $('schCal').innerHTML = `<div class="sch-strip" role="tablist" aria-label="選擇日期">${days.map((x, i) => { const hh = r.H.get(x); const nw = emps.reduce((a, e) => a + (r.W.get(K(e.id, x)) || []).length, 0);
-      return `<button type="button" role="tab" aria-selected="${x === d}" class="${x === d ? 'on' : ''} ${hh && hh.off ? 'is-hol' : ''} ${x === today ? 'is-today' : ''}" data-day="${x}"><span>週${WD_ORDER[i]}</span><b>${Number(x.slice(8))}</b><i>${count(x) ? `${count(x)} 人` : '—'}</i>${nw ? '<em class="sw-dot" aria-label="有提醒"></em>' : ''}</button>`; }).join('')}</div>
-    <div class="sch-day" id="schDay">
-      <div class="sd-head"><b>${mdw(d)}</b>${h ? (ROLE === 'owner' ? `<button type="button" class="hol-link" data-hgo="${d}">${holChip(h)}</button>` : holChip(h)) : ''}<span class="muted">左右滑動切換日期</span></div>
-      ${emps.map((e) => `<button type="button" class="sd-row" data-ce="${e.id}" data-cd="${d}"><span class="who">${avatar(e.name, 'sm')}<span><b>${esc(e.name)}</b><span class="sub">${esc(e.department || '')}${e.department ? '・' : ''}本週 ${weekHours(e, from)} 小時</span></span></span><span class="sd-cell">${cellInner(e, d)}</span></button>`).join('')}
-    </div>`;
-  $('schCal').querySelectorAll('[data-day]').forEach((b) => b.onclick = () => { SCH.day = b.dataset.day; renderWeekMobile(emps, from); });
-  const box = $('schDay'); let sx = null, sy = null;
-  box.addEventListener('touchstart', (ev) => { sx = ev.touches[0].clientX; sy = ev.touches[0].clientY; }, { passive: true });
-  box.addEventListener('touchend', (ev) => {
-    if (sx === null) return; const dx = ev.changedTouches[0].clientX - sx, dy = ev.changedTouches[0].clientY - sy; sx = null;
-    if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
-    const i = days.indexOf(d) + (dx < 0 ? 1 : -1);
-    if (i < 0) { SCH.anchor = addDays(SCH.anchor, -7); SCH.day = addDays(d, -1); loadSchedule(); }
-    else if (i > 6) { SCH.anchor = addDays(SCH.anchor, 7); SCH.day = addDays(d, 1); loadSchedule(); }
-    else { SCH.day = days[i]; renderWeekMobile(emps, from); }
+function openPick(cell) {
+  closePick();
+  const r = SCH.data, emp = r.employees.find((e) => e.id == cell.dataset.ce), d = cell.dataset.cd; if (!emp) return;
+  const c = cellState(emp, d);
+  pickAt = { emp: emp.id, d }; cell.classList.add('is-picked');
+  const tpls = r.templates.filter((t) => fitsStaff(t, emp));
+  const cur = c.x ? (c.x.kind === 'shift' ? `t${c.x.template_id}` : 'rest') : '';
+  const notes = [
+    c.closed ? `${icon('flag', 13)}公休（${esc(c.h.name)}）` : c.h && c.h.off ? `${icon('flag', 13)}${esc(c.h.name)}：出勤需經同意，工資加倍` : '',
+    c.leave ? `${icon('palm', 13)}已核准${esc(c.leave.type_name)}${c.leave.full ? '' : '（部分時段）'}` : '',
+    c.o ? `${icon('ban', 13)}${esc(c.o.text)}` : '',
+    ...c.w.map((w) => `${icon('alert', 13)}${esc(w.text)}`),
+  ].filter(Boolean);
+  const canToggleOff = d > taipeiToday() && (!c.o || c.o.kind === 'date');
+  const bg = document.createElement('div'); bg.className = 'pick-bg'; bg.id = 'schPickBg'; bg.onclick = closePick;
+  const p = document.createElement('div'); p.className = 'sch-pick'; p.id = 'schPick'; p.setAttribute('role', 'dialog'); p.setAttribute('aria-label', `${emp.name} ${mdw(d)} 選擇班別`);
+  p.innerHTML = `<div class="pk-head">${avatar(emp.name, 'sm')}<b>${esc(emp.name)}</b><span class="st-tag ${emp.staff}">${esc(emp.staff_text)}</span><span class="muted">${mdw(d)}</span><button type="button" class="btn ghost sm icon-only x" data-pkx aria-label="關閉">${icon('x', 18)}</button></div>
+    ${notes.length ? `<div class="pk-notes">${notes.map((n) => `<span>${n}</span>`).join('')}</div>` : ''}
+    <div class="pk-chips">${tpls.map((t) => `<button type="button" class="pk" data-pk="t${t.id}" aria-pressed="${cur === `t${t.id}`}" aria-label="${esc(t.name)} ${t.start} 到 ${t.end}">${chip({ ...t, kind: 'shift' })}</button>`).join('')}
+      <button type="button" class="pk" data-pk="rest" aria-pressed="${cur === 'rest'}" aria-label="休">${chip({ kind: 'rest' })}</button>
+      <button type="button" class="pk" data-pk="clear" aria-label="清除"><span class="sc sc-none"><b>清除</b></span></button></div>
+    <div class="pk-foot"><span>${tpls.length < r.templates.length ? `只顯示${esc(emp.staff_text)}可排的班別` : '點一下就存好'}</span>${canToggleOff ? `<button type="button" class="btn ghost sm" data-pkoff>${icon('ban', 14)}${c.o ? '取消不可排班' : '代填不可排班'}</button>` : ''}</div>`;
+  document.body.append(bg, p);
+  if (!schMobile.matches) {
+    const rc = cell.getBoundingClientRect(), pw = p.offsetWidth, ph = p.offsetHeight;
+    let left = Math.min(Math.max(8, rc.left + rc.width / 2 - pw / 2), innerWidth - pw - 8);
+    let top = rc.bottom + 6; if (top + ph > innerHeight - 8) top = Math.max(8, rc.top - ph - 6);
+    Object.assign(p.style, { left: `${left}px`, top: `${top}px` });
+  }
+  p.querySelector('[data-pkx]').onclick = closePick;
+  p.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePick(); } });
+  (p.querySelector('[aria-pressed="true"]') || p.querySelector('[data-pk]')).focus({ preventScroll: true });
+  p.querySelectorAll('[data-pk]').forEach((b) => b.onclick = async () => {
+    const v = b.dataset.pk, item = { employee_id: emp.id, date: d };
+    if (v.startsWith('t')) Object.assign(item, { kind: 'shift', template_id: Number(v.slice(1)) }); else item.kind = v;
+    p.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    try {
+      const res = await api('/api/admin/schedule/entries', { method: 'PUT', body: { items: [item] } });
+      const t = v.startsWith('t') ? r.templates.find((y) => `t${y.id}` === v) : null;
+      const what = t ? `已排${t.name}` : v === 'rest' ? '已排休' : '已清除';
+      const mine = res.warnings.filter((w) => w.employee_id === emp.id && w.date === d && item.kind === 'shift');
+      closePick();
+      toast(mine.length ? `${what}・提醒：${mine[0].text}${mine.length > 1 ? `（另 ${mine.length - 1} 項）` : ''}` : `${emp.name} ${md(d)} ${what}`, mine.length ? '' : 'ok');
+      await loadSchedule();
+    } catch (e) { handle(e); p.querySelectorAll('button').forEach((x) => { x.disabled = false; }); }
   });
-  bindCells($('schCal'));
+  const off = p.querySelector('[data-pkoff]');
+  if (off) off.onclick = async () => {
+    try { await api(`/api/admin/employees/${emp.id}/dayoff/${d}`, { method: 'PUT', body: { off: !c.o } }); closePick(); toast(c.o ? '已取消不可排班' : `已代填 ${emp.name} ${md(d)} 不可排班`, 'ok'); loadSchedule(); } catch (e) { handle(e); }
+  };
 }
-function renderMonth(emps, first, last, from, to) {
-  const r = SCH.data, today = taipeiToday(), cells = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) cells.push(d);
-  const MAX = 4;
-  $('schCal').innerHTML = `<div class="sch-month card"><div class="mh">${WD_ORDER.map((w) => `<span>${w}</span>`).join('')}</div><div class="mg">
-    ${cells.map((d) => {
-      const h = r.H.get(d), out = d < first || d > last;
-      const items = emps.map((e) => ({ e, x: r.E.get(K(e.id, d)), lv: r.L.get(K(e.id, d)), w: r.W.get(K(e.id, d)) })).filter((y) => y.x || y.lv);
-      const nw = items.reduce((a, y) => a + (y.w || []).length, 0);
-      return `<button type="button" class="mc ${out ? 'out' : ''} ${h && h.off ? 'is-hol' : ''} ${d === today ? 'is-today' : ''}" data-mday="${d}" aria-label="${mdw(d)}，${items.length} 人有安排">
-        <span class="mc-top"><b>${Number(d.slice(8))}</b>${nw ? `<span class="sc-warn">${icon('alert', 11)}${nw}</span>` : ''}</span>${h ? holChip(h, 'mini') : ''}
-        <span class="mc-list">${items.slice(0, MAX).map(({ e, x, lv }) => `<span class="mi">${x ? `<i class="dot sc-${x.kind === 'shift' ? esc(x.color) : x.kind === 'rest' ? 'off' : 'reg'}"></i>` : `<i class="dot sc-leave"></i>`}<span class="mi-n">${esc(e.name)}</span><span class="mi-s">${x ? esc(x.kind === 'shift' ? x.name : x.kind_text) : esc(lv[0].type_name)}</span></span>`).join('')}${items.length > MAX ? `<span class="mi more">還有 ${items.length - MAX} 人</span>` : ''}</span>
-        <span class="mc-dots" aria-hidden="true">${items.slice(0, 6).map(({ x }) => `<i class="dot sc-${x ? (x.kind === 'shift' ? esc(x.color) : x.kind === 'rest' ? 'off' : 'reg') : 'leave'}"></i>`).join('')}</span></button>`;
-    }).join('')}</div></div><p class="help">點日期切換到該週，逐日排班。</p>`;
-  $('schCal').querySelectorAll('[data-mday]').forEach((b) => b.onclick = () => { SCH.view = 'week'; SCH.day = b.dataset.mday; SCH.anchor = mondayOf(SCH.day); loadSchedule(); });
-}
+addEventListener('resize', () => { if ($('schPick') && !schMobile.matches) closePick(); });
 
-// 單格編輯
-function cellEditor(emp, d) {
-  if (!emp) return;
-  const r = SCH.data, k = K(emp.id, d), x = r.E.get(k), p = r.P.get(k), lv = r.L.get(k) || [], h = r.H.get(d), w = r.W.get(k) || [];
-  const av = r.A.get(k);
-  const cur = x ? (x.kind === 'shift' ? (x.template_id && r.T.has(x.template_id) ? `t${x.template_id}` : 'custom') : x.kind) : av && av.status === 'pref' && r.T.has(av.template_id) ? `t${av.template_id}` : 'clear';
-  const opt = (v, inner, extra = '') => `<label class="sopt ${extra}"><input type="radio" name="pick" value="${v}" ${cur === v ? 'checked' : ''}><span>${inner}</span></label>`;
-  modal(`<form class="form-grid sch-edit">
-    <div class="summary-box"><span class="who">${avatar(emp.name, 'sm')}<b>${esc(emp.name)}</b></span>・${mdw(d)}</div>
-    ${h ? `<div class="alert ${h.off ? 'warn' : 'info'}">${icon('flag', 18)}<div><b>${esc(h.name)}</b>（${esc(h.kind_text)}）${h.off ? '：放假日。若需出勤請先取得勞工同意，國定假日出勤工資加倍。' : '：照常上班日。'}</div></div>` : ''}
-    ${av ? `<div class="alert ${av.status === 'no' ? 'warn' : 'info'}">${icon(av.status === 'no' ? 'ban' : 'calendarCheck', 18)}<div>員工登記：<b>${esc(av.status_text)}</b>${av.note ? `｜${esc(av.note)}` : ''}${av.status === 'no' ? '。仍可排班，但會列入提醒。' : ''}</div></div>` : ''}
-    ${lv.map((l) => `<div class="alert ${l.kind === 'leave' ? 'warn' : 'info'}">${icon(l.kind === 'leave' ? 'palm' : 'home', 18)}<div>已核准<b>${esc(l.type_name)}</b>${l.full ? '（全天）' : '（部分時段）'}</div></div>`).join('')}
-    <fieldset class="sopts"><legend>班別</legend>
-      ${r.templates.map((t) => opt(`t${t.id}`, `${chip({ ...t, kind: 'shift' }, { short: true })}<small>${t.start}–${t.overnight ? '翌日 ' : ''}${t.end}・${t.hours}h</small>`)).join('')}
-      ${opt('custom', `<span class="sc sc-text-soft"><b>自訂時間</b></span><small>單次調整</small>`)}
-      ${opt('rest', `${chip({ kind: 'rest' })}<small>可經同意出勤</small>`)}
-      ${opt('regular', `${chip({ kind: 'regular' })}<small>每 7 日 1 日</small>`)}
-      ${opt('clear', `<span class="sc sc-none"><b>不排班</b></span><small>清除</small>`)}
-    </fieldset>
-    <div class="row3 sch-custom ${cur === 'custom' ? '' : 'hidden'}">
-      <div><label for="ceS">上班</label><input type="time" id="ceS" name="start" value="${x && x.kind === 'shift' ? x.start : '09:00'}"></div>
-      <div><label for="ceE">下班</label><input type="time" id="ceE" name="end" value="${x && x.kind === 'shift' ? x.end : '18:00'}"></div>
-      <div><label for="ceB">休息（分）</label><input type="number" id="ceB" name="break_min" min="0" max="240" step="5" value="${x && x.kind === 'shift' ? x.break_min : 60}"></div>
-    </div>
-    <div><label for="ceN">備註（選填）</label><input type="text" id="ceN" name="note" maxlength="60" value="${esc(x ? x.note : '')}" placeholder="例如：支援倉儲、教育訓練"></div>
-    ${w.length ? `<div class="alert warn">${icon('scale', 18)}<div><b>勞基法提醒</b><ul class="w-ul">${w.map((y) => `<li>${esc(y.text)}</li>`).join('')}</ul></div></div>` : ''}
-    ${p && !sameEntry(x, p) ? `<p class="help" style="margin:0">${icon('info', 14)} 員工目前看到的是已發布的：${p.kind === 'shift' ? `${esc(p.name)} ${p.start}–${p.end}` : esc(p.kind_text)}；重新發布後才會更新。</p>` : ''}
-    ${actions('儲存（草稿）')}</form>`,
-  async (f) => {
-    const v = f.pick.value, item = { employee_id: emp.id, date: d, note: f.note.value };
-    if (v.startsWith('t')) Object.assign(item, { kind: 'shift', template_id: Number(v.slice(1)) });
-    else if (v === 'custom') Object.assign(item, { kind: 'shift', start: f.start.value, end: f.end.value, break_min: Number(f.break_min.value || 0) });
-    else item.kind = v;
-    await saveItems([item]);
-  }, { title: '排班', icon: 'calendar' });
-  const f = $('modal').querySelector('form');
-  f.querySelectorAll('input[name=pick]').forEach((i) => i.onchange = () => f.querySelector('.sch-custom').classList.toggle('hidden', f.pick.value !== 'custom'));
-}
-async function saveItems(items, msg = '已儲存為草稿') {
-  const r = await api('/api/admin/schedule/entries', { method: 'PUT', body: { items } });
-  toast(r.warnings.length ? `${msg}・有 ${r.warnings.length} 項勞基法提醒` : msg, r.warnings.length ? '' : 'ok');
-  loadSchedule();
-}
-async function publishWeek(w, unpublish) {
-  const r = SCH.data, wk = r.weeks.find((x) => x.week_start === w);
-  const ids = new Set(r.employees.map((e) => e.id));
-  const nw = r.warnings.filter((x) => ids.has(x.employee_id) && x.date >= w && x.date <= wk.week_end).length;
-  modal(`<form class="form-grid"><p style="margin:0">${unpublish ? `取消發布後，員工將看不到 ${md(w)}～${md(wk.week_end)} 的班表，打卡紀錄改回依上班時間設定判斷遲到。` : `發布 ${md(w)}～${md(wk.week_end)} 的班表給${ROLE === 'manager' ? '您團隊的' : '全部'} ${r.employees.length} 位員工。員工會在打卡頁「班表」看到，打卡紀錄也會依此判斷遲到與早退。`}</p>
-    ${!unpublish && nw ? `<div class="alert warn">${icon('scale', 18)}<div>這週還有 <b>${nw}</b> 項勞基法提醒，仍可發布。</div></div>` : ''}${actions(unpublish ? '取消發布' : '發布', unpublish)}</form>`,
-  async () => { await api('/api/admin/schedule/publish', { method: 'POST', body: { week_start: w, unpublish } }); toast(unpublish ? '已取消發布' : '已發布，員工可以看到這週班表', 'ok'); loadSchedule(); },
-  { title: unpublish ? '取消發布班表' : '發布班表', icon: unpublish ? 'undo' : 'send', danger: unpublish });
-}
-
-// 工具列
-$('schPrev').onclick = () => { if (SCH.view === 'week') { SCH.anchor = addDays(SCH.anchor, -7); SCH.day = addDays(SCH.day || SCH.anchor, -7); } else { const m = shiftMonth(SCH.anchor.slice(0, 7), -1); SCH.anchor = `${m}-01`; } loadSchedule(); };
-$('schNext').onclick = () => { if (SCH.view === 'week') { SCH.anchor = addDays(SCH.anchor, 7); SCH.day = addDays(SCH.day || SCH.anchor, 7); } else { const m = shiftMonth(SCH.anchor.slice(0, 7), 1); SCH.anchor = `${m}-01`; } loadSchedule(); };
-$('schToday').onclick = () => { SCH.day = taipeiToday(); SCH.anchor = SCH.view === 'week' ? mondayOf(SCH.day) : SCH.day.slice(0, 8) + '01'; loadSchedule(); };
+// ---------- 工具列 ----------
+$('schPrev').onclick = () => { closePick(); SCH.anchor = SCH.view === 'week' ? addDays(SCH.anchor, -7) : `${shiftMonth(SCH.anchor.slice(0, 7), -1)}-01`; loadSchedule(); };
+$('schNext').onclick = () => { closePick(); SCH.anchor = SCH.view === 'week' ? addDays(SCH.anchor, 7) : `${shiftMonth(SCH.anchor.slice(0, 7), 1)}-01`; loadSchedule(); };
+$('schToday').onclick = () => { const t = taipeiToday(); SCH.anchor = SCH.view === 'week' ? mondayOf(t) : t.slice(0, 8) + '01'; loadSchedule(); };
 document.querySelectorAll('[data-sview]').forEach((b) => b.onclick = () => {
   if (b.dataset.sview === SCH.view) return;
   SCH.view = b.dataset.sview;
-  SCH.anchor = SCH.view === 'month' ? (SCH.day || SCH.anchor).slice(0, 8) + '01' : mondayOf(SCH.day && SCH.day.slice(0, 7) === SCH.anchor.slice(0, 7) ? SCH.day : SCH.anchor);
+  const t = taipeiToday();
+  SCH.anchor = SCH.view === 'month' ? addDays(SCH.anchor, 3).slice(0, 8) + '01' : (SCH.anchor.slice(0, 7) === t.slice(0, 7) ? mondayOf(t) : mondayOf(SCH.anchor));
   loadSchedule();
 });
 $('schDept').onchange = () => { SCH.dept = $('schDept').value; renderSchedule(); };
-$('schHolBtn').onclick = () => { holYear = Number((SCH.day || SCH.anchor).slice(0, 4)); setStab('hol'); };
-schMobile.addEventListener('change', () => { if (SCH.data && SCH.tab === 'cal' && !$('appView').classList.contains('hidden')) renderSchedule(); });
+schMobile.addEventListener('change', () => { closePick(); if (SCH.data && SCH.tab === 'cal') renderSchedule(); });
 
 $('schCopy').onclick = () => {
-  const src = addDays(SCH.anchor, -7);
-  modal(`<form class="form-grid"><p style="margin:0">把上週（${md(src)}～${md(addDays(src, 6))}）的班表複製到本週（${md(SCH.anchor)}～${md(addDays(SCH.anchor, 6))}）${SCH.dept ? `，只複製「${esc(SCH.dept)}」` : ''}。複製後是草稿，確認後再發布。</p>
-    <label class="switch-row"><input type="checkbox" class="switch" name="overwrite"><span class="d">覆蓋本週已排好的班</span></label>${actions('複製')}</form>`,
-  async (f) => copyWeeks(src, [SCH.anchor], f.overwrite.checked), { title: '複製上週班表', icon: 'repeat' });
+  const src = addDays(SCH.anchor, -7), emps = schEmps(), r = SCH.data;
+  const have = emps.reduce((a, e) => a + Array.from({ length: 7 }, (_, i) => r.E.has(K(e.id, addDays(SCH.anchor, i)))).filter(Boolean).length, 0);
+  const go = (overwrite) => copyWeek(src, overwrite);
+  if (!have) return go(false).catch(handle);
+  modal(`<form class="form-grid"><p style="margin:0">本週已經排了 <b>${have}</b> 格。要用上週（${md(src)}～${md(addDays(src, 6))}）的班表覆蓋嗎？公休日會略過。</p>
+    <div class="actions"><button type="button" class="btn secondary" data-cancel>取消</button><button type="button" class="btn secondary" id="cpFill">只補空白</button><button class="btn danger" type="submit">覆蓋</button></div></form>`,
+  async () => go(true), { title: '複製上週', icon: 'repeat' });
+  $('cpFill').onclick = async () => { closeModal(); try { await go(false); } catch (e) { handle(e); } };
 };
-$('schRepeat').onclick = () => {
-  modal(`<form class="form-grid"><p style="margin:0">把本週（${md(SCH.anchor)}～${md(addDays(SCH.anchor, 6))}）的班表當作固定模式，重複套用到之後幾週${SCH.dept ? `（只套用「${esc(SCH.dept)}」）` : ''}。</p>
-    <div><label for="rpN">套用週數</label><select id="rpN" name="n">${[1, 2, 3, 4, 6, 8, 12].map((n) => `<option value="${n}" ${n === 4 ? 'selected' : ''}>之後 ${n} 週（到 ${md(addDays(SCH.anchor, 7 * n + 6))}）</option>`).join('')}</select></div>
-    <label class="switch-row"><input type="checkbox" class="switch" name="overwrite"><span class="d">覆蓋已排好的班</span></label>${actions('套用')}</form>`,
-  async (f) => copyWeeks(SCH.anchor, Array.from({ length: Number(f.n.value) }, (_, i) => addDays(SCH.anchor, 7 * (i + 1))), f.overwrite.checked), { title: '重複套用週班表', icon: 'calendarCheck' });
-};
-async function copyWeeks(source_week, target_weeks, overwrite) {
+async function copyWeek(source_week, overwrite) {
   const employee_ids = SCH.dept ? schEmps().map((e) => e.id) : undefined;
-  const r = await api('/api/admin/schedule/copy', { method: 'POST', body: { source_week, target_weeks, overwrite, employee_ids } });
-  toast(`已複製 ${r.copied} 筆${r.skipped ? `，略過已排的 ${r.skipped} 筆` : ''}${r.warnings.length ? `・有 ${r.warnings.length} 項提醒` : ''}`, 'ok');
+  const r = await api('/api/admin/schedule/copy', { method: 'POST', body: { source_week, target_weeks: [SCH.anchor], overwrite, employee_ids } });
+  toast(r.copied ? `已複製上週 ${r.copied} 格${r.skipped ? `，保留已排的 ${r.skipped} 格` : ''}${r.closed ? `，略過公休 ${r.closed} 格` : ''}` : '上週沒有可複製的班', r.copied ? 'ok' : '');
   loadSchedule();
 }
-$('schBulk').onclick = () => {
-  const r = SCH.data, { from, to, first, last } = schRange(), emps = schEmps();
-  const a = SCH.view === 'month' ? first : from, b = SCH.view === 'month' ? last : to;
-  modal(`<form class="form-grid sch-edit">
-    <div class="summary-box">套用範圍：${mdw(a)}～${mdw(b)}</div>
-    <fieldset class="chk-grid"><legend>員工</legend>${emps.map((e) => `<label class="chk"><input type="checkbox" name="emp" value="${e.id}" checked><span>${esc(e.name)}</span></label>`).join('')}</fieldset>
-    <fieldset class="chk-grid days"><legend>星期</legend>${WD_ORDER.map((w, i) => `<label class="chk"><input type="checkbox" name="wd" value="${(i + 1) % 7}" ${i < 5 ? 'checked' : ''}><span>${w}</span></label>`).join('')}</fieldset>
-    <fieldset class="sopts"><legend>排成</legend>
-      ${r.templates.map((t, i) => `<label class="sopt"><input type="radio" name="pick" value="t${t.id}" ${i === 0 ? 'checked' : ''}><span>${chip({ ...t, kind: 'shift' }, { short: true })}<small>${t.start}–${t.overnight ? '翌日 ' : ''}${t.end}</small></span></label>`).join('')}
-      <label class="sopt"><input type="radio" name="pick" value="rest"><span>${chip({ kind: 'rest' })}</span></label>
-      <label class="sopt"><input type="radio" name="pick" value="regular"><span>${chip({ kind: 'regular' })}</span></label>
-      <label class="sopt"><input type="radio" name="pick" value="clear"><span><span class="sc sc-none"><b>清除</b></span></span></label>
-    </fieldset>
-    <label class="switch-row"><input type="checkbox" class="switch" name="skip" checked><span class="d">略過國定假日與已核准請假的日子</span></label>
-    <label class="switch-row"><input type="checkbox" class="switch" name="keep"><span class="d">只排空白的日子（不覆蓋已排的班）</span></label>
-    ${actions('批次套用')}</form>`,
-  async (f) => {
-    const ids = [...f.querySelectorAll('input[name=emp]:checked')].map((i) => Number(i.value));
-    const wds = new Set([...f.querySelectorAll('input[name=wd]:checked')].map((i) => Number(i.value)));
-    const v = f.pick.value, items = [];
-    for (let d = a; d <= b; d = addDays(d, 1)) {
-      if (!wds.has(new Date(d + 'T00:00:00Z').getUTCDay())) continue;
-      for (const id of ids) {
-        const k = K(id, d);
-        if (f.skip.checked && v.startsWith('t') && ((r.H.get(d) || {}).off || (r.L.get(k) || []).some((l) => l.kind === 'leave'))) continue;
-        if (f.keep.checked && r.E.has(k)) continue;
-        items.push({ employee_id: id, date: d, ...(v.startsWith('t') ? { kind: 'shift', template_id: Number(v.slice(1)) } : { kind: v }) });
-      }
-    }
-    if (!items.length) throw new Error('沒有符合條件的日子');
-    await saveItems(items, `已批次排 ${items.length} 格（草稿）`);
-  }, { title: '批次排班', icon: 'calendarPlus' });
+$('schReset').onclick = () => {
+  const w = SCH.data.weeks.find((x) => x.week_start === SCH.anchor) || {};
+  modal(`<form class="form-grid"><p style="margin:0">${w.published_count ? '把本週還沒發布的變更全部還原，回到上次發布的班表。' : '本週還沒發布過，重設會清空本週所有排好的班。'}${ROLE === 'manager' ? '（只影響您的團隊）' : ''}</p>${actions('重設', true)}</form>`,
+  async () => { await api('/api/admin/schedule/reset', { method: 'POST', body: { week_start: SCH.anchor } }); toast('已重設本週', 'ok'); loadSchedule(); },
+  { title: '重設本週', icon: 'undo', danger: true });
 };
 
-// 班別
-const COLOR_NAME = { primary: '奶茶', 'primary-soft': '淺奶茶', accent: '玫瑰', 'accent-soft': '淺玫瑰', text: '可可', 'text-soft': '淺可可' };
+// ---------- 人員：排班中、固定休假日、每月休假天數、代填不可排班 ----------
+async function loadStaff() {
+  try {
+    const list = await api('/api/admin/employees');
+    $('stfList').innerHTML = list.map((e) => `<div class="card stf ${e.scheduling ? '' : 'is-hidden'}" data-sid="${e.id}">
+      <div class="stf-top">${avatar(e.name, 'sm')}<span class="en"><b>${esc(e.name)}</b><span class="sub"><span class="st-tag ${e.staff}">${e.staff === 'part' ? '工讀' : '正職'}</span>${esc(e.department || '')}</span></span>
+        <label class="sw-sched"><input type="checkbox" class="switch" data-sched ${e.scheduling ? 'checked' : ''} aria-label="${esc(e.name)} 排班中"><span>${e.scheduling ? '排班中' : '不排班'}</span></label></div>
+      <div class="stf-row"><span class="lbl">固定休假日</span><div class="wd7" role="group" aria-label="${esc(e.name)} 固定休假日">${WD_SUN.map((w, i) => `<button type="button" data-wd="${i}" aria-pressed="${e.fixed_off.includes(i)}" aria-label="週${w}">${w}</button>`).join('')}</div></div>
+      <div class="stf-row">${e.staff === 'full' ? `<label class="mo-in">每月休假<input type="number" inputmode="numeric" min="0" max="31" data-mo value="${e.monthly_off ?? ''}" placeholder="—" aria-label="${esc(e.name)} 每月休假天數">天</label>` : '<span class="help">工讀：不限休假天數</span>'}
+        <button type="button" class="btn ghost sm" data-dates style="margin-left:auto">${icon('calendarX', 15)}不可排班日</button></div>
+    </div>`).join('') || `<div class="card"><div class="empty"><span class="empty-ic">${icon('users', 24)}</span><b>沒有員工</b></div></div>`;
+    $('stfList').querySelectorAll('[data-sid]').forEach((card) => {
+      const e = list.find((x) => x.id == card.dataset.sid);
+      const save = async (body, msg) => { try { const r = await api(`/api/admin/employees/${e.id}/schedule-prefs`, { method: 'PUT', body }); Object.assign(e, r); toast(msg, 'ok'); return r; } catch (err) { handle(err); return null; } };
+      card.querySelector('[data-sched]').onchange = async (ev) => {
+        const on = ev.target.checked, r = await save({ scheduling: on }, on ? `${e.name} 排班中` : `${e.name} 不排班（不會出現在班表）`);
+        if (!r) { ev.target.checked = !on; return; }
+        card.classList.toggle('is-hidden', !on); ev.target.nextElementSibling.textContent = on ? '排班中' : '不排班';
+      };
+      card.querySelectorAll('[data-wd]').forEach((b) => b.onclick = async () => {
+        const i = Number(b.dataset.wd), set = new Set(e.fixed_off); set.has(i) ? set.delete(i) : set.add(i);
+        const r = await save({ fixed_off: [...set] }, `${e.name} 固定休假日：${[...set].sort().map((x) => `週${WD_SUN[x]}`).join('、') || '無'}`);
+        if (r) card.querySelectorAll('[data-wd]').forEach((x) => x.setAttribute('aria-pressed', r.fixed_off.includes(Number(x.dataset.wd))));
+      });
+      const mo = card.querySelector('[data-mo]');
+      if (mo) mo.onchange = async () => { const r = await save({ monthly_off: mo.value === '' ? null : Number(mo.value) }, mo.value === '' ? `${e.name} 不檢查每月休假` : `${e.name} 每月休假 ${mo.value} 天`); if (!r) mo.value = e.monthly_off ?? ''; };
+      card.querySelector('[data-dates]').onclick = () => dayoffModal(e);
+    });
+  } catch (e) { handle(e); }
+}
+// 代填不可排班日（月曆，點一下就存）
+function dayoffModal(emp) {
+  let m = taipeiToday().slice(0, 7);
+  modal(`<form class="form-grid"><div id="doBox"></div><p class="help" style="margin:0">點未來的日子切換「不可排班」，立即存檔；淺色為每週固定休假日。</p><div class="actions"><button type="button" class="hidden" data-cancel></button><button class="btn" type="submit">完成</button></div></form>`,
+    async () => { if (SCH.tab === 'cal') loadSchedule(); }, { title: `${emp.name}・不可排班日`, icon: 'calendarX' });
+  const draw = async () => {
+    try {
+      const from = `${m}-01`, to = monthEnd(m);
+      const r = await api(`/api/admin/schedule?from=${from}&to=${to}&employee_id=${emp.id}`);
+      const dates = new Set((r.dayoff || []).filter((o) => o.kind === 'date').map((o) => o.date));
+      $('doBox').innerHTML = dayoffCal(m, dates, emp.fixed_off, taipeiToday());
+      $('doBox').querySelector('[data-mprev]').onclick = () => { m = shiftMonth(m, -1); draw(); };
+      $('doBox').querySelector('[data-mnext]').onclick = () => { m = shiftMonth(m, 1); draw(); };
+      $('doBox').querySelectorAll('[data-dd]').forEach((b) => b.onclick = async () => {
+        const d = b.dataset.dd, on = !dates.has(d);
+        try { await api(`/api/admin/employees/${emp.id}/dayoff/${d}`, { method: 'PUT', body: { off: on } }); toast(`${md(d)} ${on ? '不可排班' : '已取消'}`, 'ok'); draw(); } catch (e) { handle(e); }
+      });
+    } catch (e) { handle(e); }
+  };
+  draw();
+}
+// 共用月曆（管理員代填用；員工端有自己的版本）
+function dayoffCal(m, dates, fixed, today) {
+  const first = `${m}-01`, last = monthEnd(m), pad = wdOfD(first), cells = [];
+  for (let i = 0; i < pad; i++) cells.push('<span></span>');
+  for (let d = first; d <= last; d = addDays(d, 1)) {
+    const fx = fixed.includes(wdOfD(d)), on = dates.has(d), past = d <= today;
+    cells.push(`<button type="button" class="do-day ${on ? 'on' : fx ? 'fixed' : ''} ${d === today ? 'today' : ''}" ${past ? 'disabled' : `data-dd="${d}"`} aria-pressed="${on}" aria-label="${mdw(d)}${on ? '，不可排班' : fx ? '，固定休假日' : ''}">${Number(d.slice(8))}${on ? '<small>不可</small>' : fx ? '<small>固定</small>' : ''}</button>`);
+  }
+  return `<div class="do-cal"><div class="do-nav"><button type="button" class="btn secondary sm icon-only" data-mprev aria-label="上個月">${icon('chevronLeft', 18)}</button><b>${Number(m.slice(0, 4))} 年 ${Number(m.slice(5))} 月</b><button type="button" class="btn secondary sm icon-only" data-mnext aria-label="下個月">${icon('chevronRight', 18)}</button></div>
+    <div class="do-grid">${WD_SUN.map((w) => `<span class="wh">${w}</span>`).join('')}${cells.join('')}</div>
+    <div class="do-legend"><span><i class="l-on"></i>不可排班</span><span><i class="l-fx"></i>固定休假日</span></div></div>`;
+}
+
+// ---------- 班別 ----------
+const COLOR_NAME = { primary: '奶茶', 'primary-deep': '深奶茶', 'primary-soft': '淺奶茶', sand: '沙色', accent: '玫瑰', 'accent-soft': '淺玫瑰', text: '可可', 'text-soft': '淺灰' };
+const APPLIES_TEXT = { full: '正職班', part: '工讀班', all: '都可以' };
 let tplCache = null;
 async function loadTemplates() {
   try {
     const r = await api('/api/admin/shift-templates'); tplCache = r;
+    const owner = ROLE === 'owner';
+    $('minStaff').innerHTML = `<label for="msIn"><b>每日最少上班人數</b></label>${owner ? `<input type="number" id="msIn" inputmode="numeric" min="1" max="99" value="${r.min_staff ?? ''}" placeholder="—"> 人` : `<b>${r.min_staff ? `${r.min_staff} 人` : '不檢查'}</b>`}
+      <p class="help">班表每天上方會顯示上班人數，少於這個數字時以重點色提醒；空白＝不檢查。公休日不檢查。</p>`;
+    if (owner) $('msIn').onchange = async () => { try { const x = await api('/api/admin/schedule/settings', { method: 'PUT', body: { min_staff: $('msIn').value === '' ? null : Number($('msIn').value) } }); toast(x.min_staff ? `每日最少 ${x.min_staff} 人` : '不檢查每日人數', 'ok'); } catch (e) { handle(e); } };
     $('tplList').innerHTML = r.templates.map((t) => `<div class="card tpl-row ${t.active ? '' : 'is-off'}">
       ${chip({ ...t, kind: 'shift' }, { short: true })}
-      <div class="tpl-main"><b>${t.start} – ${t.overnight ? '翌日 ' : ''}${t.end}</b><span class="muted">休息 ${t.break_min} 分・工時 ${t.hours} 小時${t.overnight ? '・跨夜' : ''}${t.active ? '' : '・已停用'}</span></div>
+      <div class="tpl-main"><b>${t.start} – ${t.overnight ? '翌日 ' : ''}${t.end}</b><span class="muted"><span class="st-tag ${t.applies === 'part' ? 'part' : ''}">${esc(t.applies_text)}</span> ${t.hours} 小時${t.overnight ? '・跨夜' : ''}${t.active ? '' : '・已停用'}</span></div>
       <button class="btn secondary sm owner-only" data-tedit="${t.id}">${icon('pencil', 15)}修改</button></div>`).join('')
       || `<div class="card"><div class="empty"><span class="empty-ic">${icon('clock', 24)}</span><b>還沒有班別</b>按「新增班別」建立早班、晚班等常用時段</div></div>`;
     $('tplList').querySelectorAll('[data-tedit]').forEach((b) => b.onclick = () => tplModal(r.templates.find((t) => t.id == b.dataset.tedit)));
   } catch (e) { handle(e); }
 }
 function tplModal(t) {
-  const colors = (tplCache && tplCache.colors) || Object.keys(COLOR_NAME), c0 = t ? t.color : 'primary';
+  const colors = (tplCache && tplCache.colors) || Object.keys(COLOR_NAME), c0 = t ? t.color : 'primary', a0 = t ? t.applies : 'all';
   modal(`<form class="form-grid">
-    <div><label for="tpN">班別名稱</label><input type="text" id="tpN" name="name" maxlength="10" required value="${esc(t ? t.name : '')}" placeholder="例如：早班、晚班、全天"></div>
-    <div class="row3">
+    <div><label for="tpN">班別名稱</label><input type="text" id="tpN" name="name" maxlength="10" required value="${esc(t ? t.name : '')}" placeholder="例如：早班、晚班"></div>
+    <div class="row2">
       <div><label for="tpS">上班</label><input type="time" id="tpS" name="start" required value="${t ? t.start : '09:00'}"></div>
       <div><label for="tpE">下班</label><input type="time" id="tpE" name="end" required value="${t ? t.end : '18:00'}"></div>
-      <div><label for="tpB">休息（分）</label><input type="number" id="tpB" name="break_min" min="0" max="240" step="5" value="${t ? t.break_min : 60}"></div>
     </div>
     <p class="help" id="tpHint" style="margin:0"></p>
-    <fieldset class="swatches"><legend>顏色（奶茶色系）</legend>${colors.map((c) => `<label class="sw"><input type="radio" name="color" value="${c}" ${c === c0 ? 'checked' : ''}><span class="sc sc-${c}"><b>${COLOR_NAME[c] || c}</b></span></label>`).join('')}</fieldset>
+    <fieldset class="seg3"><legend>適用</legend>${['full', 'part', 'all'].map((v) => `<label><input type="radio" name="applies" value="${v}" ${v === a0 ? 'checked' : ''}><span>${APPLIES_TEXT[v]}</span></label>`).join('')}</fieldset>
+    <fieldset class="swatches"><legend>顏色</legend>${colors.map((c) => `<label class="sw"><input type="radio" name="color" value="${c}" ${c === c0 ? 'checked' : ''}><span class="sc sc-${c}"><b>${COLOR_NAME[c] || c}</b></span></label>`).join('')}</fieldset>
     ${t ? `<label class="switch-row"><input type="checkbox" class="switch" name="active" ${t.active ? 'checked' : ''}><span class="d">啟用（停用後排班時不會出現，已排的班不受影響）</span></label>` : ''}
     ${actions(t ? '儲存' : '新增')}</form>`,
   async (f) => {
-    const body = { ...formData(f), break_min: Number(f.break_min.value || 0) };
+    const body = { name: f.name.value, start: f.start.value, end: f.end.value, color: f.color.value, applies: f.applies.value, break_min: t ? t.break_min : 0 };
     if (t) body.active = f.active.checked;
     await api('/api/admin/shift-templates' + (t ? `/${t.id}` : ''), { method: t ? 'PUT' : 'POST', body });
     toast(t ? '班別已更新' : '已新增班別', 'ok'); loadTemplates();
@@ -329,77 +369,9 @@ function tplModal(t) {
     const [sh, sm] = f.start.value.split(':').map(Number), [eh, em] = f.end.value.split(':').map(Number);
     if (Number.isNaN(sh) || Number.isNaN(eh)) return;
     let m = eh * 60 + em - (sh * 60 + sm); const night = m <= 0; if (night) m += 1440;
-    const h = +((m - Number(f.break_min.value || 0)) / 60).toFixed(2);
-    $('tpHint').innerHTML = `${icon('info', 14)} 工時 ${h} 小時${night ? '・跨夜班（隔天下班）' : ''}${h > 12 ? '・超過 12 小時' : ''}`;
+    const h = +((m - (t ? t.break_min : 0)) / 60).toFixed(2);
+    $('tpHint').innerHTML = `${icon('info', 14)} ${h} 小時${night ? '・跨夜班（隔天下班）' : ''}${h > 12 ? '・超過 12 小時' : ''}`;
   };
-  ['start', 'end', 'break_min'].forEach((n) => f[n].addEventListener('input', hint)); hint();
+  ['start', 'end'].forEach((n) => f[n].addEventListener('input', hint)); hint();
 }
 $('tplAdd').onclick = () => tplModal(null);
-
-
-// 可上班時段登記（開放期間）
-function setAvailCount(n) { const el = $('availTabCount'); if (el) el.textContent = n || ''; }
-let avCache = null;
-async function loadAvailPeriods() {
-  try {
-    const r = await api('/api/admin/avail-periods'); avCache = r;
-    setAvailCount(r.periods.filter((p) => p.open).length);
-    $('avHead').textContent = ROLE === 'manager' ? '開放一段日期讓您團隊的員工在打卡頁「班表」填寫可上班時段，截止前可修改；排班時每一格會顯示員工填的狀態。' : $('avHead').textContent;
-    $('avList').innerHTML = r.periods.map((p) => {
-      const pct = p.employee_count ? Math.round((p.submitted_count / p.employee_count) * 100) : 0;
-      const st = p.open ? `<span class="badge b-brand">${icon('hourglass')}登記中</span>` : p.closed ? `<span class="badge b-neutral">${icon('lock')}已提前結束</span>` : `<span class="badge b-neutral">${icon('lock')}已截止</span>`;
-      return `<div class="card av-card">
-        <div class="av-top"><div><b class="av-range">${mdw(p.from)} ～ ${mdw(p.to)}</b>${st}</div>
-          <span class="muted">截止 ${mdw(p.deadline_text.slice(0, 10))}${p.deadline_text.slice(11)}${p.note ? `・${esc(p.note)}` : ''}</span></div>
-        <div class="av-prog"><div class="bar"><i style="width:${pct}%"></i></div><span>已提交 <b>${p.submitted_count}</b> / ${p.employee_count}</span></div>
-        ${p.missing.length ? `<div class="av-names"><span class="lbl">未提交</span>${p.missing.map((m) => `<span class="av-name miss">${esc(m.name)}</span>`).join('')}</div>` : ''}
-        ${p.submitted.length ? `<div class="av-names"><span class="lbl">已提交</span>${p.submitted.map((m) => `<span class="av-name" title="${esc(m.at)}">${esc(m.name)}</span>`).join('')}</div>` : ''}
-        <div class="av-act">
-          <button class="btn secondary sm" data-avsch="${p.from}">${icon('calendar', 15)}去排班</button>
-          ${p.can_manage ? `<button class="btn ghost sm" data-avedit="${p.id}">${icon('pencil', 15)}修改截止</button>
-          <button class="btn ghost sm" data-avclose="${p.id}">${p.open ? `${icon('lock', 15)}提前結束` : `${icon('unlock', 15)}重新開放`}</button>
-          <button class="btn danger-ghost sm" data-avdel="${p.id}">${icon('trash', 15)}刪除</button>` : '<span class="muted av-ro">含其他團隊，由管理員管理</span>'}
-        </div></div>`;
-    }).join('') || `<div class="card"><div class="empty"><span class="empty-ic">${icon('calendarCheck', 24)}</span><b>還沒有開放登記</b>按「開放登記」選擇日期與截止時間，員工就能在打卡頁填寫</div></div>`;
-    const find = (id) => r.periods.find((p) => p.id == id);
-    $('avList').querySelectorAll('[data-avsch]').forEach((b) => b.onclick = () => { SCH.view = 'week'; SCH.day = b.dataset.avsch; SCH.anchor = mondayOf(SCH.day); setStab('cal'); });
-    $('avList').querySelectorAll('[data-avedit]').forEach((b) => b.onclick = () => availModal(find(b.dataset.avedit)));
-    $('avList').querySelectorAll('[data-avclose]').forEach((b) => b.onclick = async () => { const p = find(b.dataset.avclose); try { await api(`/api/admin/avail-periods/${p.id}`, { method: 'PUT', body: { closed: p.open } }); toast(p.open ? '已結束登記' : '已重新開放', 'ok'); loadAvailPeriods(); } catch (e) { handle(e); } });
-    $('avList').querySelectorAll('[data-avdel]').forEach((b) => b.onclick = () => { const p = find(b.dataset.avdel);
-      modal(`<form class="form-grid"><p style="margin:0">刪除 ${mdw(p.from)}～${mdw(p.to)} 的登記期間？員工已填的 ${p.submitted_count} 份內容也會一併刪除（已排的班不受影響）。</p>${actions('刪除', true)}</form>`,
-        async () => { await api(`/api/admin/avail-periods/${p.id}`, { method: 'DELETE' }); toast('已刪除', 'ok'); loadAvailPeriods(); }, { title: '刪除登記期間', icon: 'trash', danger: true }); });
-  } catch (e) { handle(e); }
-}
-function availModal(p) {
-  const t = taipeiToday(), nextMon = addDays(mondayOf(t), 7);
-  const dl = (from) => { const d = addDays(from, -3); return d < t ? t : d; };
-  const dl0 = p ? p.deadline_text.split(' ') : [dl(nextMon), '18:00'];
-  const depts = (avCache && avCache.departments) || [];
-  modal(`<form class="form-grid">
-    ${p ? `<div class="summary-box">${mdw(p.from)} ～ ${mdw(p.to)}・${p.employee_count} 位員工</div>` : `
-    <div class="quick-row"><button type="button" class="chip-btn" data-q="nw">下週</button><button type="button" class="chip-btn" data-q="nw2">下兩週</button><button type="button" class="chip-btn" data-q="nm">下個月</button></div>
-    <div class="row2"><div><label for="avF">開始日期</label><input type="date" id="avF" name="from" required value="${nextMon}"></div>
-      <div><label for="avT">結束日期</label><input type="date" id="avT" name="to" required value="${addDays(nextMon, 6)}"></div></div>`}
-    <div class="row2"><div><label for="avDD">截止日期</label><input type="date" id="avDD" name="deadline_date" required value="${dl0[0]}"></div>
-      <div><label for="avDT">截止時間</label><input type="time" id="avDT" name="deadline_time" required value="${dl0[1]}"></div></div>
-    <div><label for="avN">給員工的說明（選填）</label><input type="text" id="avN" name="note" maxlength="100" value="${esc(p ? p.note : '')}" placeholder="例如：週末缺人，請盡量排開"></div>
-    ${!p && ROLE === 'owner' && depts.length > 1 ? `<fieldset class="chk-grid"><legend>對象（不選＝全部在職員工）</legend>${depts.map((d) => `<label class="chk"><input type="checkbox" name="dept" value="${esc(d)}"><span>${esc(d)}</span></label>`).join('')}</fieldset>` : ''}
-    ${!p && ROLE === 'manager' ? `<p class="help" style="margin:0">${icon('users', 14)} 對象：您團隊的在職員工</p>` : ''}
-    <p class="help" style="margin:0">${icon('info', 14)} 員工會在打卡頁「班表」看到並填寫每一天：可上班、想上的班別或不行；截止前都能修改。</p>
-    ${actions(p ? '儲存' : '開放登記')}</form>`,
-  async (f) => {
-    const body = { deadline_date: f.deadline_date.value, deadline_time: f.deadline_time.value, note: f.note.value };
-    if (!p) Object.assign(body, { from: f.from.value, to: f.to.value, departments: [...f.querySelectorAll('input[name=dept]:checked')].map((i) => i.value) });
-    await api('/api/admin/avail-periods' + (p ? `/${p.id}` : ''), { method: p ? 'PUT' : 'POST', body });
-    toast(p ? '已更新截止時間' : '已開放登記，員工可以開始填寫', 'ok'); loadAvailPeriods();
-  }, { title: p ? '修改登記期間' : '開放可上班時段登記', icon: 'calendarCheck' });
-  const f = $('modal').querySelector('form');
-  f.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => {
-    let a = nextMon, z = addDays(nextMon, 6);
-    if (b.dataset.q === 'nw2') z = addDays(nextMon, 13);
-    if (b.dataset.q === 'nm') { const m = shiftMonth(t.slice(0, 7), 1); a = `${m}-01`; z = monthEnd(m); }
-    f.from.value = a; f.to.value = z; f.deadline_date.value = dl(a);
-    f.querySelectorAll('[data-q]').forEach((x) => x.classList.toggle('on', x === b));
-  });
-}
-$('avAdd').onclick = () => availModal(null);
